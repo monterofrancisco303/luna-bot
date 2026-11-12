@@ -13,6 +13,9 @@ TELEGRAM_TOKEN = "9290146578:AAEZKmrTvwXVq6QU-0vsWmMR30sfwys6PdU"
 DANI_CHAT_ID = 8099004064
 RENDER_EXTERNAL_URL = "https://luna-bot-a1fc.onrender.com"
 
+# 👇 PEGA AQUÍ TU CLAVE NUEVA Y PRIVADA DE OPENROUTER
+OPENROUTER_API_KEY = "sk-or-v1-TU_CLAVE_AQUI"
+
 # ======================
 # BASE DE DATOS
 # ======================
@@ -124,7 +127,7 @@ async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error reenviando al admin: {e}")
 
 # ======================
-# ANÁLISIS DE IMAGEN CON VISIÓN REAL (Three.ws)
+# ANÁLISIS DE IMAGEN CON VISIÓN REAL (OpenRouter)
 # ======================
 def analizar_imagen_con_vision(imagen_bytes, tipo="foto"):
     try:
@@ -142,24 +145,35 @@ def analizar_imagen_con_vision(imagen_bytes, tipo="foto"):
         Sé directa, cachonda y usa palabras como morbo, sexy, caliente.
         """
 
-        # LLAMADA A THREE.WS (Sin registro, sin API Key)
         response = requests.post(
-            url="https://three.ws/api/vision/analyze", 
-            headers={"Content-Type": "application/json"},
+            url="https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json"
+            },
             json={
-                "prompt": prompt,
-                "image": f"data:image/jpeg;base64,{base64_image}"
+                "model": "google/gemma-4-26b-a4b-it:free", # Modelo de visión GRATIS
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                        ]
+                    }
+                ],
+                "temperature": 0.7,
+                "max_tokens": 500
             },
             timeout=30
         )
         
         data = response.json()
-        if 'text' in data:
-            return data['text'].strip()
+        if 'choices' in data and len(data['choices']) > 0:
+            return data['choices'][0]['message']['content'].strip()
         else:
-            print(f"Error Three.ws: {data}")
+            print(f"Error OpenRouter: {data}")
             return "💋 Me encantó la foto, pero no pude analizarla bien. ¿Me la mandas de nuevo?"
-
     except Exception as e:
         print(f"Error en visión: {e}")
         return "💋 Me encantó la foto, pero no pude analizarla bien."
@@ -258,7 +272,7 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 8080))
 
-    print("🌙 Luna Bot iniciado con Visión Artificial (Three.ws)...")
+    print("🌙 Luna Bot iniciado con Visión Artificial (OpenRouter)...")
     application.run_webhook(
         listen="0.0.0.0",
         port=port,
