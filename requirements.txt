@@ -1,7 +1,6 @@
-python-telegram-bot
+python-telegram-bot[webhooks]
 flask
 groq
 huggingface_hub
-agewizard
 pillow
 requests
