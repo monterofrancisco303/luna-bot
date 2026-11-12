@@ -10,11 +10,11 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 # CONFIGURACIÓN
 # ======================
 TELEGRAM_TOKEN = "9290146578:AAEZKmrTvwXVq6QU-0vsWmMR30sfwys6PdU"
-DANI_CHAT_ID = 8099004064
+DANI_CHAT_ID = "8099004064"
 RENDER_EXTERNAL_URL = "https://luna-bot-a1fc.onrender.com"
 
-# 👇 PEGA AQUÍ TU CLAVE NUEVA Y PRIVADA DE OPENROUTER
-OPENROUTER_API_KEY = "sk-or-v1-TU_CLAVE_AQUI"
+# 👇 AQUÍ VA TU CLAVE DE OPENROUTER (La que ya tienes)
+OPENROUTER_API_KEY = "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"
 
 # ======================
 # BASE DE DATOS
