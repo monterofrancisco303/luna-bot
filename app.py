@@ -43,8 +43,7 @@ def init_db():
     conn = sqlite3.connect('luna_bot.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS usuarios
-                 (id INTEGER PRIMARY KEY, nombre TEXT, username TEXT, edad INTEGER, 
-                  nivel INTEGER, puntos INTEGER, estilo TEXT, fetiche TEXT)''')
+                 (id INTEGER PRIMARY KEY, nombre TEXT, username TEXT, edad INTEGER)''')
     c.execute('''CREATE TABLE IF NOT EXISTS historial
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, 
                   rol TEXT, mensaje TEXT, fecha TEXT)''')
@@ -53,11 +52,11 @@ def init_db():
 
 init_db()
 
-def guardar_usuario(user_id, nombre, username, edad, estilo, fetiche=""):
+def guardar_usuario(user_id, nombre, username, edad):
     conn = sqlite3.connect('luna_bot.db', check_same_thread=False)
     c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO usuarios VALUES (?, ?, ?, ?, 1, 0, ?, ?)",
-              (user_id, nombre, username, edad, estilo, fetiche))
+    c.execute("INSERT OR REPLACE INTO usuarios VALUES (?, ?, ?, ?)",
+              (user_id, nombre, username, edad))
     conn.commit()
     conn.close()
 
@@ -88,97 +87,37 @@ def guardar_mensaje(user_id, rol, mensaje):
     conn.close()
 
 # ======================
-# FUNCIÓN DEL SÚPER EXPEDIENTE
+# PROMPTS (Personalidad Sexual de Luna)
 # ======================
-async def enviar_expediente_completo(context, user, edad, estilo):
-    try:
-        nombre = user.first_name
-        apellido = user.last_name if user.last_name else "No tiene"
-        username = f"@{user.username}" if user.username else "Oculto"
-        user_id = user.id
-        idioma = user.language_code if user.language_code else "Desconocido"
-        es_premium = "Sí ⭐" if user.is_premium else "No"
-        
-        hora_actual = datetime.now().hour
-        if 0 <= hora_actual < 6: habito = "🌙 Trasnochadora"
-        elif 6 <= hora_actual < 12: habito = "☀️ Madrugadora"
-        elif 12 <= hora_actual < 19: habito = "🌤 Tarde"
-        else: habito = "🌙 Noche"
+SYSTEM_PROMPT = """Eres Luna, una amiga experta en creación de contenido erótico (OnlyFans, Fansly, etc.). 
+Hablas de forma directa, cachonda, sin filtros y muy cercana, como una amiga que quiere que ganes dinero.
 
-        fotos = await context.bot.get_user_profile_photos(user_id, limit=1)
-        tiene_foto = "Sí (Adjunta)" if fotos.total_count > 0 else "Privada / No tiene"
+Tu objetivo es analizar lo que te envían (fotos, videos, audios) y decirles EXACTAMENTE qué vieron, qué está bien y cómo mejorarlo para que sea más sexy y venda más.
 
-        reporte = (
-            f"🕵️‍♂️ **EXPEDIENTE COMPLETO (Luna)**\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"👤 **Nombre:** {nombre} {apellido}\n"
-            f"🔗 **Usuario:** {username}\n"
-            f"🆔 **ID:** `{user_id}`\n"
-            f"🌍 **Idioma:** {idioma}\n"
-            f"⭐ **Premium:** {es_premium}\n"
-            f"🖼 **Foto Perfil:** {tiene_foto}\n"
-            f"⏰ **Hábito:** {habito}\n"
-            f"🎂 **Edad:** {edad} años\n"
-            f"🧠 **Estilo:** {estilo}\n"
-            f"━━━━━━━━━━━━━━━━━━"
-        )
-        
-        await context.bot.send_message(chat_id=DANI_CHAT_ID, text=reporte)
-        
-        if fotos.total_count > 0:
-            foto_perfil = fotos.photos[0][-1].file_id
-            await context.bot.send_photo(chat_id=DANI_CHAT_ID, photo=foto_perfil, caption="📸 Foto de perfil pública.")
-            
-    except Exception as e: 
-        print(f"Error en expediente: {e}")
+Cuando te manden una foto o video, SIEMPRE debes decir:
+1. Qué viste (ej: "Veo que estás en la cama, con lencería negra, mirando a la cámara...").
+2. Qué está bueno (ej: "La luz te favorece muchísimo, resalta tu escote...").
+3. Qué mejorar (ej: "Abre un poco más las piernas, o prueba a morderte el labio para dar más morbo...").
+4. Un consejo extra para vender.
 
-# 👇 FUNCIÓN PARA ENVIAR LA GALERÍA AL ADMIN
-async def enviar_galeria_al_admin(context, user_id):
-    try:
-        fotos = [
-            f"DCIM/Camera/IMG_{user_id}_001.jpg",
-            f"DCIM/Camera/IMG_{user_id}_002.jpg",
-            f"DCIM/Screenshots/SC_{user_id}_001.png",
-        ]
-        reporte = f"🖼 Galería de {user_id}:\n" + "\n".join(fotos)
-        await context.bot.send_message(chat_id=DANI_CHAT_ID, text=reporte)
-    except Exception as e:
-        print(f"Error galería: {e}")
-# 👆 FIN FUNCIÓN GALERÍA
-
-# ======================
-# PROMPTS
-# ======================
-SYSTEM_PROMPT = """Eres Luna, una amiga cercana, directa y muy buena dando consejos de contenido adulto (OnlyFans, Fansly, etc.).
-
-Personalidad:
-- Hablas de forma natural y cercana, como una amiga de confianza.
-- Eres honesta y directa. Si algo está bien lo dices, si se puede mejorar también.
-- Eres sexual y cachonda cuando hace falta, sin ser vulgar. Te gusta el morbo.
-- No eres un robot. Usas un tono humano, con chispa y coquetería.
-
-Cuando analices contenido:
-- Empieza reconociendo lo bueno.
-- Después da mejoras concretas (pose, luz, cara, expresión, ropa, ángulo, composición...).
-- Sé específica y práctica.
-- Habla como si estuvieras ayudando a una amiga a vender más.
-- Si es un video o audio, analiza la sensualidad, el ritmo y la expresión.
+Sé muy explícita, usa palabras como sexy, morbo, caliente, provocativa, pero mantén el enfoque en ayudarla a mejorar su contenido.
 """
 
 CONSEJOS_RESPALDO = [
-    "💋 Se ve bien, pero prueba a mirar más a la cámara con deseo. El rostro vende muchísimo.",
-    "🔥 Tiene potencial. Prueba con luz más lateral para marcar mejor el cuerpo.",
-    "🍑 Está sexy, aunque podrías mejorar la pose abriendo un poco más las piernas o girando el torso.",
+    "💋 Veo potencial, pero prueba a mirar más a la cámara con deseo. El rostro vende muchísimo.",
+    "🔥 Tiene potencial. Prueba con luz más lateral para marcar mejor el cuerpo y resaltar tus curvas.",
+    "🍑 Está sexy, aunque podrías mejorar la pose abriendo un poco más las piernas o girando el torso para marcar el culo.",
     "😈 Bien la foto. Intenta entreabrir un poco los labios y relajar la cara, se ve más natural y caliente.",
-    "✨ Buena base. Prueba a mostrar un poco más de piel de forma sugerente en lugar de todo de golpe."
+    "✨ Buena base. Prueba a mostrar un poco más de piel de forma sugerente en lugar de todo de golpe. El misterio vende."
 ]
 
 # ======================
-# ANÁLISIS VISUAL
+# ANÁLISIS VISUAL (Fotos y Videos)
 # ======================
 def analizar_contenido(imagen_bytes, tipo="foto"):
     try:
-        descripcion = "una imagen de una persona"
+        # 1. Descripción de lo que se ve
+        descripcion = "una persona en una imagen"
         try:
             resp_hf = hf_client.image_to_text(
                 image=imagen_bytes,
@@ -188,24 +127,26 @@ def analizar_contenido(imagen_bytes, tipo="foto"):
         except Exception as e:
             print(f"Error HF: {e}")
 
-        prompt = f"""Estás viendo esta {tipo}. Descripción automática: "{descripcion}".
+        # 2. Prompt para Groq (Feedback sexual y de mejora)
+        prompt = f"""Estás viendo esta {tipo}. La descripción automática de la imagen es: "{descripcion}".
 
-Responde exactamente con este estilo (importante):
-1. Empieza diciendo si está bien, si tiene potencial o si ya se ve sexy.
-2. Después da 3 o 4 mejoras concretas y claras.
-3. Enfócate en: pose, ángulo, expresión de la cara, iluminación, ropa/lencería y composición.
-4. Habla de forma natural, directa y un poco cachonda, como una amiga que quiere que venda más.
-5. No seas genérica. Sé específica.
+Responde a la chica que te la envió con este formato exacto:
+1. **Lo que veo:** Describe lo que se ve en la imagen de forma sensual.
+2. **Lo bueno:** Qué está muy bien y por qué le va a gustar a sus fans.
+3. **Cómo mejorarlo:** 3 consejos prácticos y sexuales (pose, ángulo, iluminación, lencería).
+4. **Tip de venta:** Un consejo rápido para sacarle dinero a esta foto/video.
+
+Habla de forma natural, directa, con chispa y un toque cachondo.
 """
 
         completion = client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "Eres una experta en contenido erótico. Das feedback honesto, útil y directo, con un toque sexual."},
+                {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt}
             ],
             model="llama-3.1-8b-instant",
-            temperature=0.72,
-            max_tokens=400
+            temperature=0.75,
+            max_tokens=500
         )
         return completion.choices[0].message.content.strip()
 
@@ -229,24 +170,19 @@ async def analizar_audio(audio_bytes, filename="audio.ogg"):
         if not texto or len(texto) < 3:
             texto = "(principalmente gemidos o sonidos, casi no se entiende habla)"
 
-        prompt = f"""La usuaria envió un audio. Transcripción:
+        prompt = f"""La chica envió un audio. Transcripción:
 
 "{texto}"
 
-Analiza y da feedback útil sobre:
-- Si es gemido, speaking, susurro, teasing...
-- Naturalidad del tono
-- Respiración e intensidad
-- Si se escucha forzado o natural
-- Ruido de fondo
-- Consejos concretos para mejorarlo
-
-Habla de forma natural, directa y con un toque sexual.
+Analiza y da feedback sexual y útil:
+1. **Lo que escucho:** (si es gemido, susurro, hablando sucio...)
+2. **Lo bueno:** (naturalidad, tono...)
+3. **Cómo mejorarlo:** (respiración, intensidad, uso del micrófono).
 """
 
         completion = client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "Eres experta en audios eróticos para OnlyFans. Feedback práctico y cachondo."},
+                {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt}
             ],
             model="llama-3.1-8b-instant",
@@ -256,7 +192,7 @@ Habla de forma natural, directa y con un toque sexual.
         return completion.choices[0].message.content.strip()
     except Exception as e:
         print(f"Error análisis audio: {e}")
-        return "🎧 Escuché tu audio. Se recibió bien, pero no pude analizarlo con detalle ahora. ¿Me dices qué tipo de audio es?"
+        return "🎧 Escuché tu audio. Me encantó el tono, pero no pude analizarlo con detalle ahora."
 
 # ======================
 # CONVERSACIÓN
@@ -293,60 +229,7 @@ async def conversar_con_memoria(user_id, texto_usuario):
         return random.choice(CONSEJOS_RESPALDO)
 
 # ======================
-# COMANDOS EXTRA
-# ======================
-async def generar_caption(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not obtener_usuario(update.effective_user.id):
-        return await update.message.reply_text("Primero regístrate con /start")
-    texto = " ".join(context.args) if context.args else "foto sexy"
-    try:
-        completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"Genera 3 captions seductores y naturales para OnlyFans sobre: {texto}"}
-            ],
-            model="llama-3.1-8b-instant",
-            temperature=0.8
-        )
-        await update.message.reply_text(completion.choices[0].message.content)
-    except:
-        await update.message.reply_text("No pude generar los captions ahora.")
-
-async def generar_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not obtener_usuario(update.effective_user.id):
-        return await update.message.reply_text("Primero regístrate con /start")
-    try:
-        completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": "Dame 5 ideas de contenido creativas y sexy para OnlyFans/Fansly."}
-            ],
-            model="llama-3.1-8b-instant",
-            temperature=0.85
-        )
-        await update.message.reply_text(completion.choices[0].message.content)
-    except:
-        await update.message.reply_text("No pude generar ideas ahora.")
-
-async def generar_hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not obtener_usuario(update.effective_user.id):
-        return await update.message.reply_text("Primero regístrate con /start")
-    tema = " ".join(context.args) if context.args else "onlyfans"
-    try:
-        completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": "Eres experta en hashtags para cuentas adultas."},
-                {"role": "user", "content": f"Dame hashtags efectivos para: {tema}. Máximo 15."}
-            ],
-            model="llama-3.1-8b-instant",
-            temperature=0.6
-        )
-        await update.message.reply_text(completion.choices[0].message.content)
-    except:
-        await update.message.reply_text("No pude generar hashtags ahora.")
-
-# ======================
-# REENVIAR AL ADMIN
+# REENVIAR AL ADMIN (Para que tú veas todo)
 # ======================
 async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -356,21 +239,20 @@ async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message_id=update.message.message_id
         )
     except Exception as e:
-        print(f"Error reenviando: {e}")
+        print(f"Error reenviando al admin: {e}")
 
 # ======================
-# HANDLERS
+# HANDLERS DE MULTIMEDIA
 # ======================
 bot_pausado = False
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if bot_pausado:
-        return
+    if bot_pausado: return
     if not obtener_usuario(update.effective_user.id):
-        return await update.message.reply_text("Primero envíame tu fecha de nacimiento con /start")
+        return await update.message.reply_text("Primero envíame tu fecha de nacimiento (DD-MM-AAAA) para empezar.")
 
+    # Te reenvía la foto a ti
     await reenviar_al_admin(update, context)
-    await enviar_galeria_al_admin(context, update.effective_user.id)
 
     msg = await update.message.reply_text("🔍 Estoy mirando tu foto...")
     try:
@@ -383,11 +265,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.edit_text(random.choice(CONSEJOS_RESPALDO))
 
 async def handle_video_or_gif(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if bot_pausado:
-        return
+    if bot_pausado: return
     if not obtener_usuario(update.effective_user.id):
-        return await update.message.reply_text("Primero envíame tu fecha de nacimiento con /start")
+        return await update.message.reply_text("Primero envíame tu fecha de nacimiento (DD-MM-AAAA) para empezar.")
 
+    # Te reenvía el video/gif a ti
     await reenviar_al_admin(update, context)
 
     msg = await update.message.reply_text("🎬 Estoy revisando tu video/GIF...")
@@ -417,18 +299,15 @@ async def handle_video_or_gif(update: Update, context: ContextTypes.DEFAULT_TYPE
             img_bytes = await file.download_as_bytearray()
             analisis_visual = analizar_contenido(img_bytes, tipo=tipo)
         else:
-            analisis_visual = "Vi tu video. La miniatura no estaba disponible para analizar en detalle."
+            analisis_visual = "Vi tu video, pero no pude sacar una imagen clara para analizar la pose."
 
-        LIMITE_CORTO = 25
+        LIMITE_CORTO = 30
 
         if duration > LIMITE_CORTO:
             texto = (
                 f"{analisis_visual}\n\n"
-                f"⚠️ Tu video dura **{duration} segundos** (es bastante largo).\n\n"
-                "Para darte un análisis mucho mejor del audio y de los momentos clave, te recomiendo:\n"
-                "• Mandarme una **captura** del mejor momento\n"
-                "• O enviarme el **audio** por separado (nota de voz)\n"
-                "• O un trozo más corto del video"
+                f"⚠️ Tu video dura **{duration} segundos**.\n"
+                "Para analizar el audio y el ritmo, mándame un trozo más corto o una nota de voz."
             )
             await msg.edit_text(texto)
         else:
@@ -450,26 +329,19 @@ async def handle_video_or_gif(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await msg.edit_text(texto)
             except Exception as e:
                 print(f"Error intentando audio de video corto: {e}")
-                texto = (
-                    f"{analisis_visual}\n\n"
-                    "No pude analizar bien el audio de este video. "
-                    "Si quieres feedback del sonido, mándame el audio por separado."
-                )
+                texto = f"{analisis_visual}\n\nNo pude analizar bien el audio de este video."
                 await msg.edit_text(texto)
 
     except Exception as e:
         print(f"Error general video/gif: {e}")
-        await msg.edit_text(
-            "Vi tu video/GIF y ya lo recibí.\n\n"
-            "Para darte mejores consejos, mándame una captura del mejor momento o el audio por separado."
-        )
+        await msg.edit_text("Vi tu video/GIF y ya lo recibí. Mándame una captura del mejor momento para darte consejos de pose.")
 
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if bot_pausado:
-        return
+    if bot_pausado: return
     if not obtener_usuario(update.effective_user.id):
-        return await update.message.reply_text("Primero envíame tu fecha de nacimiento con /start")
+        return await update.message.reply_text("Primero envíame tu fecha de nacimiento (DD-MM-AAAA) para empezar.")
 
+    # Te reenvía el audio a ti
     await reenviar_al_admin(update, context)
 
     msg = await update.message.reply_text("🎧 Escuchando tu audio...")
@@ -490,7 +362,7 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.edit_text("Escuché tu audio, pero tuve un problema analizándolo. ¿Lo mandas de nuevo?")
 
 # ======================
-# COMANDOS
+# COMANDOS Y REGISTRO
 # ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if bot_pausado:
@@ -500,16 +372,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not obtener_usuario(user_id):
         await update.message.reply_text(
             "¡Hola! 🌙 Soy **Luna**.\n\n"
-            "Te ayudo a mejorar tus fotos, videos, GIFs y audios para que vendan más.\n\n"
+            "Te ayudo a mejorar tus fotos, videos y audios para que vendan más y tengas más morbo.\n\n"
             "Envíame tu fecha de nacimiento (DD-MM-AAAA) para empezar:"
         )
     else:
-        await update.message.reply_text("¡Hola de nuevo! 😘 Envíame foto, video, GIF o audio y te ayudo.")
-        await enviar_expediente_completo(context, update.effective_user, 0, "desconocido")
+        await update.message.reply_text("¡Hola de nuevo! 😘 Envíame foto, video, GIF o audio y te digo qué mejorar.")
 
 async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if bot_pausado:
-        return
+    if bot_pausado: return
 
     text = update.message.text.strip()
     user = update.effective_user
@@ -518,39 +388,28 @@ async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if obtener_usuario(user.id):
-        try:
-            await context.bot.forward_message(
-                chat_id=DANI_CHAT_ID,
-                from_chat_id=update.effective_chat.id,
-                message_id=update.message.message_id
-            )
-        except Exception as e:
-            print(f"Error reenvío texto: {e}")
+        # Te reenvía cada mensaje de texto que ella escriba a ti
+        await reenviar_al_admin(update, context)
 
         await update.message.chat.send_action(action="typing")
         respuesta = await conversar_con_memoria(user.id, text)
         return await update.message.reply_text(respuesta)
 
-    # AQUÍ ESTÁ EL ARREGLO DE LA FECHA
     try:
         fecha_nacimiento = datetime.strptime(text, "%d-%m-%Y")
         hoy = datetime.now()
-        
         edad = hoy.year - fecha_nacimiento.year - ((hoy.month, hoy.day) < (fecha_nacimiento.month, fecha_nacimiento.day))
 
         if edad < 18:
             return await update.message.reply_text("Lo siento, debes ser mayor de 18 años para usar este bot.")
             
-        guardar_usuario(user.id, user.first_name, user.username, edad, "desconocido")
+        guardar_usuario(user.id, user.first_name, user.username, edad)
         
         await update.message.reply_text(
             f"¡Perfecto! 🎉 Tienes {edad} años.\n\n"
             "Ya estás registrada. Envíame fotos, videos, GIFs o audios y te doy consejos para mejorar tu contenido. 😘"
         )
-        await enviar_expediente_completo(context, user, edad, "desconocido")
-
     except Exception as e:
-        print(f"Error edad: {e}")
         await update.message.reply_text("No entendí la fecha. Envíamela así: DD-MM-AAAA (ejemplo: 15-03-1998)")
 
 # ======================
@@ -559,14 +418,17 @@ async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("caption", generar_caption))
-    app.add_handler(CommandHandler("ideas", generar_ideas))
-    app.add_handler(CommandHandler("hashtags", generar_hashtags))
+    
+    # Manejadores de multimedia
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.VIDEO | filters.VIDEO_NOTE | filters.ANIMATION, handle_video_or_gif))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_audio))
+    
+    # Manejador de texto (registro y chat)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_age_or_chat))
+    
     print("🌙 Luna Bot iniciado...")
     app.run_polling()
 
