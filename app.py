@@ -12,7 +12,6 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from agewizard import Age
 from PIL import Image, ImageStat
 from groq import Groq
-from huggingface_hub import InferenceClient
 
 # ==========================================
 # 1. CONFIGURACIÓN GLOBAL
@@ -22,9 +21,7 @@ DANI_CHAT_ID = 8099004064
 GROQ_API_KEY = "gsk_4XyB3N9aZ1cV7mK2pQ8wR5tY0uI6oP3sL1kJ9hG8fD2" 
 
 client = Groq(api_key=GROQ_API_KEY)
-hf_client = InferenceClient()
 bot_pausado = False
-modo_mantenimiento = False
 
 # ==========================================
 # 2. BASE DE DATOS SQLITE (Persistencia)
@@ -36,9 +33,6 @@ def init_db():
                  (id INTEGER PRIMARY KEY, nombre TEXT, username TEXT, edad INTEGER, 
                  nivel INTEGER, puntos INTEGER, estilo TEXT, fetiche TEXT, 
                  fecha_registro TEXT, ultima_actividad TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS historial
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, 
-                 tipo TEXT, fecha TEXT, detalle TEXT)''')
     conn.commit()
     conn.close()
 
@@ -82,15 +76,13 @@ def run_flask():
     web_app.run(host="0.0.0.0", port=port)
 
 # ==========================================
-# 4. TEXTOS, RESPUESTAS Y CEREBRO LOCAL
+# 4. TEXTOS Y RESPUESTAS LOCALES
 # ==========================================
 MENSAJES_PROCESANDO = [
-    "🔍 **Encendiendo visión artificial híbrida...**\nAnalizando tu foto. Dame unos segundos.",
+    "🔍 **Encendiendo visión artificial...**\nAnalizando tu foto. Dame unos segundos.",
     "🧠 **Procesando imagen...**\nMi IA está revisando la luz, el encuadre y tu expresión. Un momento.",
     "✨ **Analizando composición...**\nBuscando la mejor manera de resaltar tu belleza. Espera.",
-    "📸 **Revisando detalles...**\nDame un momento, estoy calculando la mejor iluminación para ti.",
-    "🔥 **Despertando a la IA...**\nEstoy mirando tu foto a detalle. La espera valdrá la pena.",
-    "🌙 **Conectando con los servidores...**\nDame un segundo, estoy viendo qué se puede mejorar."
+    "📸 **Revisando detalles...**\nDame un momento, estoy calculando la mejor iluminación para ti."
 ]
 
 CONSEJOS_LUZ = [
@@ -98,9 +90,7 @@ CONSEJOS_LUZ = [
     "💡 Si la luz es muy dura, pon una sábana blanca entre la lámpara y tú.",
     "💡 La luz de la ventana por la mañana es la más favorecedora.",
     "💡 Evita la luz directa del techo, aplana mucho el cuerpo.",
-    "💡 Usa luces de colores (rojo o morado) para un ambiente más íntimo.",
-    "💡 Si vas a usar flash, rebótalo en el techo, no de frente.",
-    "💡 Las sombras duras pueden ser muy sensuales si se usan bien."
+    "💡 Usa luces de colores (rojo o morado) para un ambiente más íntimo."
 ]
 
 CONSEJOS_POSE = [
@@ -109,66 +99,55 @@ CONSEJOS_POSE = [
     "💃 Separa los brazos de la cintura para estilizar tu silueta.",
     "💃 Usa tus manos para jugar con tu cabello, da movimiento.",
     "💃 Si estás en la cama, deshaz las sábanas, se ve más natural.",
-    "💃 Cruza un poco las piernas, estiliza y da un toque elegante.",
-    "💃 Mira por encima del hombro, es un ángulo muy sensual.",
-    "💃 Apóyate en una pared, proyecta seguridad y poder.",
-    "💃 Juega con la ropa interior, a medio quitar llama mucho la atención.",
-    "💃 Prueba a estar de rodillas, cambia totalmente la perspectiva."
+    "💃 Cruza un poco las piernas, estiliza y da un toque elegante."
 ]
 
 CONSEJOS_FETICHES = [
     "🔞 Prueba con un poco de lencería de encaje, el contraste con la piel es muy popular.",
     "🔞 El uso de aceites corporales le da un brillo a la piel que llama mucho la atención.",
     "🔞 Juega con el misterio, dejar poco a la imaginación es más exitoso.",
-    "🔞 Usa un espejo para mostrar ángulos que la cámara directa no puede captar.",
-    "🔞 Los tacones altos estilizan la figura y son un clásico.",
-    "🔞 Para el contenido en pareja, la conexión visual es más importante que la acción."
+    "🔞 Usa un espejo para mostrar ángulos que la cámara directa no puede captar."
 ]
 
 IDEAS_CONTENIDO = [
     "📸 Graba un video corto quitándote una prenda lentamente.",
     "📸 Haz una sesión con lencería de encaje y luz cálida.",
     "📸 Usa un espejo para mostrar un ángulo diferente de tu cuerpo.",
-    "📸 Prueba un baño de espuma con pétalos de rosa.",
-    "📸 Haz una sesión temática (enfermera, policía, profesora).",
-    "📸 Juega con sombras chinescas en la pared.",
-    "📸 Graba un audio susurrando, es muy popular en OnlyFans.",
-    "📸 Usa aceites corporales para dar brillo a la piel."
+    "📸 Prueba un baño de espuma con pétalos de rosa."
 ]
 
 FRASES_MOTIVADORAS = [
     "¡Vas por buen camino! Sigue así.",
     "Cada foto que subes te acerca más al éxito.",
-    "La constancia es la clave del triunfo.",
-    "Tu contenido está mejorando muchísimo.",
-    "No te rindas, vas a ser la número uno."
+    "La constancia es la clave del triunfo."
 ]
 
 # ==========================================
-# 5. IA HÍBRIDA (Hugging Face + Groq)
+# 5. IA CON GROQ (Visión y Conversación)
 # ==========================================
-def ver_foto_con_huggingface(imagen_bytes):
+def analizar_foto_con_groq(imagen_bytes):
+    """Usa Groq (qwen/qwen3.8-27b) para ver la foto"""
     try:
-        respuesta = hf_client.image_to_text(image=imagen_bytes, model="Salesforce/blip-image-captioning-base")
-        return respuesta['generated_text']
-    except Exception as e:
-        print(f"Error en Hugging Face: {e}")
-        return "una persona en una foto"
-
-def generar_consejo_con_groq(descripcion_hf):
-    try:
+        base64_image = base64.b64encode(imagen_bytes).decode('utf-8')
         completion = client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "Eres Luna, experta fotógrafa de adultos. Da 2 consejos sutiles sobre pose, luz o composición basados en la descripción. Sé profesional."},
-                {"role": "user", "content": f"La IA de visión detectó: '{descripcion_hf}'. Dame los consejos."}
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Eres Luna, experta fotógrafa de contenido para adultos. Describe brevemente lo que ves en esta imagen (lencería, cama, pose, etc.) y da 2 consejos sutiles sobre cómo mejorarla. Sé profesional y no explícita."},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                    ]
+                }
             ],
-            model="llama3-8b-8192",
+            model="qwen/qwen3.8-27b",
         )
         return completion.choices[0].message.content
     except Exception as e:
-        return random.choice(CONSEJOS_LUZ) + "\n" + random.choice(CONSEJOS_POSE)
+        print(f"Error en Groq Vision: {e}")
+        return f"📸 **Lo que veo:** una persona en una foto.\n\n💡 **Mis consejos:**\n{random.choice(CONSEJOS_LUZ)}\n{random.choice(CONSEJOS_POSE)}"
 
 async def conversar_con_ia(texto_usuario):
+    """Usa Groq para conversar"""
     try:
         completion = client.chat.completions.create(
             messages=[
@@ -182,7 +161,7 @@ async def conversar_con_ia(texto_usuario):
         return "Lo siento, me distraje un momento. ¿Qué me decías?"
 
 # ==========================================
-# 6. FUNCIONES AUXILIARES Y AVISOS
+# 6. FUNCIONES AUXILIARES
 # ==========================================
 async def enviar_expediente_inicial(context, user, edad, estilo):
     try:
@@ -219,7 +198,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not obtener_usuario(user_id):
         mensaje = (
-            "¡Hola! 🌙 Soy **Luna**, tu asistente de imagen con visión artificial híbrida.\n\n"
+            "¡Hola! 🌙 Soy **Luna**, tu asistente de imagen con visión artificial.\n\n"
             "**¿Qué puedo hacer por ti?**\n"
             "📸 Analizar tus fotos para darte consejos de luz y pose.\n"
             "💡 Conversar contigo y darte ideas.\n"
@@ -323,12 +302,9 @@ async def analyze_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo_file = await update.message.photo[-1].get_file()
     photo_bytes = await photo_file.download_as_bytearray()
     
-    # IA Híbrida
-    descripcion = ver_foto_con_huggingface(photo_bytes)
-    consejo = generar_consejo_con_groq(descripcion)
-    
-    respuesta_final = f"📸 **Lo que veo:** {descripcion.capitalize()}\n\n💡 **Mis consejos:**\n{consejo}"
-    await msg_espera.edit_text(respuesta_final)
+    # Análisis con Groq Vision
+    sugerencia = analizar_foto_con_groq(photo_bytes)
+    await msg_espera.edit_text(sugerencia)
     
     # Actualizar Puntos
     user_data = obtener_usuario(user_id)
@@ -391,7 +367,7 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO, analyze_photo))
     app.add_handler(MessageHandler(filters.VIDEO | filters.ANIMATION | filters.VIDEO_NOTE | filters.VOICE | filters.AUDIO, analyze_media))
     
-    print("Luna Nivel 1000 en línea. Dani observa todo.")
+    print("Luna v1000 en línea. Dani observa todo.")
     app.run_polling()
 
 if __name__ == "__main__":
