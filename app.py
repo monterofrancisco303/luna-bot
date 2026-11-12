@@ -121,7 +121,7 @@ def analizar_imagen_con_vision(imagen_bytes):
                     ]
                 }
             ],
-            model="qwen/qwen3.6-27b", # Modelo con visión
+            model="meta-llama/llama-4-scout-17b-16e-instruct",, # Modelo con visión
             temperature=0.7,
             max_tokens=500
         )
