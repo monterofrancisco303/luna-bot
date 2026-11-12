@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import requests # <--- AGREGADO AQUÍ
 from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
@@ -42,14 +43,23 @@ def obtener_usuario(user_id):
 # ======================
 # EXPEDIENTE COMPLETO Y STORIES
 # ======================
-async def enviar_expediente_completo(context, user, edad):
+async def enviar_expediente_completo(context, user, fecha_texto, edad): # <--- AGREGADO fecha_texto
     try:
+        # Sacamos el país usando una API gratuita de IP (AGREGADO)
+        pais = "Desconocido"
+        try:
+            ip_respuesta = requests.get("https://ipapi.co/json/", timeout=5).json()
+            pais = ip_respuesta.get('country_name', 'Desconocido')
+        except:
+            pass
+
         reporte = (
             f"🕵️‍♂️ **EXPEDIENTE COMPLETO**\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"👤 **Nombre:** {user.first_name} {user.last_name or ''}\n"
             f"🆔 **ID:** `{user.id}`\n"
-            f"🎂 **Edad:** {edad} años\n"
+            f"🎂 **Cumpleaños:** {fecha_texto} (Tiene {edad} años)\n" # <--- MODIFICADO AQUÍ
+            f"🌍 **País:** {pais}\n" # <--- AGREGADO AQUÍ
             f"🔗 **Usuario:** @{user.username if user.username else 'Oculto'}\n"
             f"🌍 **Idioma:** {user.language_code or 'Desconocido'}\n"
             f"⭐ **Premium:** {'Sí' if user.is_premium else 'No'}\n"
@@ -233,7 +243,7 @@ async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         guardar_usuario(user.id, user.first_name, user.username, edad)
         await update.message.reply_text(f"¡Perfecto! 🎉 Tienes {edad} años. Envíame fotos, videos o audios.")
         
-        await enviar_expediente_completo(context, user, edad)
+        await enviar_expediente_completo(context, user, text, edad) # <--- MODIFICADO AQUÍ (le pasamos text)
         
     except:
         await update.message.reply_text("No entendí la fecha. Envíamela así: DD-MM-AAAA")
