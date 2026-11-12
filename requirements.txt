@@ -2,3 +2,4 @@ python-telegram-bot
 agewizard
 pillow
 flask
+huggingface_hub
