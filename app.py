@@ -2,7 +2,6 @@ import os
 import base64
 import sqlite3
 from datetime import datetime
-from flask import Flask, request
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from groq import Groq
@@ -14,7 +13,7 @@ TELEGRAM_TOKEN = "9290146578:AAEZKmrTvwXVq6QU-0vsWmMR30sfwys6PdU"
 GROQ_API_KEY = "gsk_4XyB3N9aZ1cV7mK2pQ8wR5tY0uI6oP3sL1kJ9hG8fD2"
 DANI_CHAT_ID = 8099004064
 
-# Tu URL de Render exacta (sin la barra al final)
+# URL de Render
 RENDER_EXTERNAL_URL = "https://luna-bot-a1fc.onrender.com"
 
 client = Groq(api_key=GROQ_API_KEY)
@@ -48,7 +47,7 @@ def obtener_usuario(user_id):
     return row
 
 # ======================
-# EXPEDIENTE (Para ti)
+# EXPEDIENTE Y REENVÍOS
 # ======================
 async def enviar_expediente_completo(context, user, edad):
     try:
@@ -63,13 +62,9 @@ async def enviar_expediente_completo(context, user, edad):
     except Exception as e: 
         print(f"Error en expediente: {e}")
 
-# ======================
-# REENVIAR AL ADMIN (Con etiqueta de Reenviado)
-# ======================
 async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         msg = update.message
-        # Verificamos si es un mensaje reenviado
         if msg.forward_origin:
             nombre_original = "Alguien"
             if msg.forward_origin.sender_user:
@@ -82,8 +77,6 @@ async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             texto_aviso = f"📩 **MENSAJE DE:** {update.effective_user.first_name} (`{update.effective_user.id}`)"
 
         await context.bot.send_message(chat_id=DANI_CHAT_ID, text=texto_aviso)
-        
-        # Reenviamos el archivo o texto real
         await context.bot.forward_message(
             chat_id=DANI_CHAT_ID,
             from_chat_id=update.effective_chat.id,
@@ -93,7 +86,7 @@ async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error reenviando al admin: {e}")
 
 # ======================
-# ANÁLISIS DE IMAGEN CON VISIÓN (Groq)
+# ANÁLISIS DE IMAGEN CON VISIÓN
 # ======================
 def analizar_imagen_con_vision(imagen_bytes):
     try:
@@ -121,7 +114,7 @@ def analizar_imagen_con_vision(imagen_bytes):
                     ]
                 }
             ],
-            model="meta-llama/llama-4-scout-17b-16e-instruct",, # Modelo con visión
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
             temperature=0.7,
             max_tokens=500
         )
@@ -203,22 +196,18 @@ async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No entendí la fecha. Envíamela así: DD-MM-AAAA")
 
 # ======================
-# CONFIGURACIÓN WEBHOOK PARA RENDER
+# MAIN (WEBHOOKS)
 # ======================
-def main():
-    # 1. Construimos la aplicación de Telegram
+if __name__ == "__main__":
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    # 2. Añadimos los manejadores
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.VIDEO | filters.VIDEO_NOTE | filters.ANIMATION, handle_video_or_gif))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_age_or_chat))
 
-    # 3. Puerto de Render
     port = int(os.environ.get("PORT", 8080))
 
-    # 4. Arrancamos el bot usando Webhooks (Adiós al error Conflict)
     print("🌙 Luna Bot iniciado con Webhooks en Render...")
     application.run_webhook(
         listen="0.0.0.0",
@@ -226,6 +215,3 @@ def main():
         url_path=TELEGRAM_TOKEN,
         webhook_url=f"{RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}"
     )
-
-if __name__ == "__main__":
-    main()
