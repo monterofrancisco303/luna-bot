@@ -1,7 +1,7 @@
-python-telegram-bot
-agewizard
-pillow
-flask
-huggingface_hub
-groq
-requests
+python-telegram-bot==21.6
+flask==3.0.3
+groq==0.11.0
+huggingface_hub==0.26.2
+agewizard==0.1.0
+pillow==10.4.0
+requests==2.32.3
