@@ -4,3 +4,4 @@ pillow
 flask
 huggingface_hub
 groq
+requests
