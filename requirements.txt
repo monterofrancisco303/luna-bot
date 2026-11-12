@@ -3,3 +3,4 @@ agewizard
 pillow
 flask
 huggingface_hub
+groq
