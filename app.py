@@ -10,11 +10,11 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 # CONFIGURACIÓN
 # ======================
 TELEGRAM_TOKEN = "9290146578:AAEZKmrTvwXVq6QU-0vsWmMR30sfwys6PdU"
-DANI_CHAT_ID = "8099004064"
+DANI_CHAT_ID = 8099004064
 RENDER_EXTERNAL_URL = "https://luna-bot-a1fc.onrender.com"
 
-# 👇 AQUÍ VA TU CLAVE DE OPENROUTER (La que ya tienes)
-OPENROUTER_API_KEY = "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"
+# 👇 PON AQUÍ TU API KEY DE OPENROUTER (Es gratis registrarse en openrouter.ai)
+OPENROUTER_API_KEY = "sk-or-v1-TU_CLAVE_AQUI" 
 
 # ======================
 # BASE DE DATOS
@@ -131,6 +131,7 @@ async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ======================
 def analizar_imagen_con_vision(imagen_bytes, tipo="foto"):
     try:
+        # Convertir la imagen a base64 para enviarla a la IA
         base64_image = base64.b64encode(imagen_bytes).decode('utf-8')
         
         prompt = f"""Actúa como Luna, una experta en contenido erótico para OnlyFans.
@@ -152,7 +153,7 @@ def analizar_imagen_con_vision(imagen_bytes, tipo="foto"):
                 "Content-Type": "application/json"
             },
             json={
-                "model": "google/gemma-4-26b-a4b-it:free", # Modelo de visión GRATIS
+                "model": "google/gemini-2.5-flash", # Modelo de visión muy potente y estable
                 "messages": [
                     {
                         "role": "user",
@@ -164,8 +165,7 @@ def analizar_imagen_con_vision(imagen_bytes, tipo="foto"):
                 ],
                 "temperature": 0.7,
                 "max_tokens": 500
-            },
-            timeout=30
+            }
         )
         
         data = response.json()
@@ -173,7 +173,8 @@ def analizar_imagen_con_vision(imagen_bytes, tipo="foto"):
             return data['choices'][0]['message']['content'].strip()
         else:
             print(f"Error OpenRouter: {data}")
-            return "💋 Me encantó la foto, pero no pude analizarla bien. ¿Me la mandas de nuevo?"
+            return "💋 Me encantó la foto, pero tuve un problema al analizarla. ¿Me la mandas de nuevo?"
+
     except Exception as e:
         print(f"Error en visión: {e}")
         return "💋 Me encantó la foto, pero no pude analizarla bien."
@@ -272,7 +273,7 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 8080))
 
-    print("🌙 Luna Bot iniciado con Visión Artificial (OpenRouter)...")
+    print("🌙 Luna Bot iniciado con Visión Artificial...")
     application.run_webhook(
         listen="0.0.0.0",
         port=port,
