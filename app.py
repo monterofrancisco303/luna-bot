@@ -2,10 +2,11 @@ import os
 import sqlite3
 import requests
 import io
-from PIL import Image, ImageStat # <--- AGREGADO PARA LA LUZ
+from PIL import Image
 from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from google import genai
 
 # ======================
 # CONFIGURACIÓN
@@ -13,6 +14,12 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 TELEGRAM_TOKEN = "9290146578:AAEZKmrTvwXVq6QU-0vsWmMR30sfwys6PdU"
 DANI_CHAT_ID = 8099004064
 RENDER_EXTERNAL_URL = "https://luna-bot-a1fc.onrender.com"
+
+# 👇 TU CLAVE DE GEMINI
+GEMINI_API_KEY = "AQ.Ab8RN6LP8dXfdF5Fg3XkfiRJVLcIDJCXw0LHXJ2rOHkGgdhqPQ"
+
+# Inicializamos el cliente de Gemini
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 # ======================
 # BASE DE DATOS
@@ -43,7 +50,7 @@ def obtener_usuario(user_id):
     return row
 
 # ======================
-# EXPEDIENTE COMPLETO Y STORIES
+# EXPEDIENTE COMPLETO
 # ======================
 async def enviar_expediente_completo(context, user, fecha_texto, edad):
     try:
@@ -88,7 +95,7 @@ async def enviar_expediente_completo(context, user, fecha_texto, edad):
         print(f"Error en expediente: {e}")
 
 # ======================
-# REENVIAR AL ADMIN (BLINDADO)
+# REENVIAR AL ADMIN
 # ======================
 async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -133,50 +140,33 @@ async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error reenviando al admin: {e}")
 
 # ======================
-# ANÁLISIS DE CONTENIDO (CON LUZ REAL)
+# ANÁLISIS DE CONTENIDO CON GEMINI (VISIÓN REAL)
 # ======================
-def analizar_contenido(tipo="foto", imagen_bytes=None):
-    # Análisis real de luz
-    calidad_luz = "La luz está un poco plana."
-    if imagen_bytes:
-        try:
-            img = Image.open(io.BytesIO(imagen_bytes)).convert('L')
-            stat = ImageStat.Stat(img)
-            brillo = stat.mean[0] 
-            
-            if brillo < 60:
-                calidad_luz = "La foto está muy oscura. Te recomiendo usar una luz más suave o acercarte a una ventana para que resalten mejor tus curvas. 💡"
-            elif brillo > 180:
-                calidad_luz = "La foto está demasiado iluminada (parece que usaste flash directo). Prueba con una luz más suave y lateral para que no se queme la imagen. 💡"
-            else:
-                calidad_luz = "¡La luz está perfecta! Resalta bien tu cuerpo de forma natural. 💡"
-        except:
-            pass
+def analizar_contenido(imagen_bytes, tipo="foto"):
+    try:
+        img = Image.open(io.BytesIO(imagen_bytes))
+        
+        prompt = f"""Actúa como Luna, una experta en contenido erótico para OnlyFans.
+        Estás analizando esta {tipo}. Debes evaluar la imagen y responder EXACTAMENTE con este formato:
 
-    if tipo == "video" or tipo == "gif":
-        return (
-            "🎬 **Análisis de tu video/GIF:**\n"
-            "1. **Lo que veo:** Una pose muy provocativa. El movimiento de cámara es un poco rápido.\n"
-            f"2. **Calidad de la luz:** {calidad_luz}\n"
-            "3. **Cómo mejorarlo:** Intenta ir más lento, mantén la mirada fija en la cámara para dar más morbo. Si muestras la cara, sonríe de forma pícara.\n"
-            "4. **Tip de venta:** Los videos donde hablas suave o gimes un poco venden muchísimo más en OnlyFans. ¡Anímate a mandar uno así! 😉"
+        1. **Nivel de desnudo:** (Di claramente si está desnuda, en ropa interior, en bikini o vestida).
+        2. **Calidad de la luz:** (Evalúa si la luz es buena o mala. Di si hay sombras raras, si está muy oscura, o si la luz resalta bien el cuerpo).
+        3. **La pose:** (Qué tan sexy es, si se ve natural o forzada, y si muestra bien las curvas).
+        4. **Lo que hay que mejorar:** (Consejos para que venda más).
+        5. **Tip de venta:** (Un consejo rápido de negocios para OnlyFans).
+
+        Sé directa, cachonda y usa palabras como morbo, sexy, caliente.
+        """
+
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[prompt, img]
         )
-    elif tipo == "audio":
-        return (
-            "🎧 **Análisis de tu audio:**\n"
-            "1. **Lo que escucho:** Tu tono de voz es muy sugerente y natural. \n"
-            "2. **Lo bueno:** La cercanía al micrófono hace que se escuche íntimo, lo cual es perfecto para contenido ASMR o de morbo.\n"
-            "3. **Cómo mejorarlo:** Intenta bajar un poco más la voz, casi en un susurro. Juega con la respiración cerca del micro.\n"
-            "4. **Tip de venta:** Los audios personalizados (diciendo el nombre de tu fan) se venden carísimos. ¡Aprovéchalo! 😈"
-        )
-    else:
-        return (
-            "🔍 **Análisis de tu foto:**\n"
-            "1. **Lo que veo:** Una foto muy atrevida. La lencería resalta perfecto.\n"
-            f"2. **Calidad de la luz:** {calidad_luz}\n"
-            "3. **Cómo mejorarlo:** Prueba a poner la luz más de lado (lateral) para que se marquen más las curvas. También prueba a morderte el labio o entreabrir la boca, da mucho más morbo.\n"
-            "4. **Tip de venta:** Esta foto es perfecta para un mensaje PPV (de pago) a primera hora de la mañana. ¡Despierta a tus fans con ganas! 🔥"
-        )
+        return response.text.strip()
+
+    except Exception as e:
+        print(f"Error en visión Gemini: {e}")
+        return "💋 Me encantó la foto, pero no pude analizarla bien. ¿Me la mandas de nuevo?"
 
 # ======================
 # HANDLERS
@@ -186,14 +176,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("Primero envíame tu fecha de nacimiento (DD-MM-AAAA).")
 
     await reenviar_al_admin(update, context)
-    msg = await update.message.reply_text("🔍 Estoy mirando tu foto...")
+    msg = await update.message.reply_text("🔍 Estoy mirando tu foto con detalle...")
     
     try:
-        # DESCARGAMOS LA FOTO REAL
         photo_file = await update.message.photo[-1].get_file()
         photo_bytes = await photo_file.download_as_bytearray()
-        
-        analisis = analizar_contenido(tipo="foto", imagen_bytes=photo_bytes)
+        analisis = analizar_contenido(photo_bytes, tipo="foto")
         await msg.edit_text(analisis)
     except Exception as e:
         await msg.edit_text("💋 Me encantó la foto, pero no pude analizarla bien.")
@@ -206,7 +194,6 @@ async def handle_video_or_gif(update: Update, context: ContextTypes.DEFAULT_TYPE
     msg = await update.message.reply_text("🎬 Estoy revisando tu video/GIF...")
 
     try:
-        # SACAMOS LA MINIATURA DEL VIDEO
         file = None
         if update.message.video and update.message.video.thumbnail:
             file = await update.message.video.thumbnail.get_file()
@@ -217,13 +204,12 @@ async def handle_video_or_gif(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         if file:
             img_bytes = await file.download_as_bytearray()
-            analisis = analizar_contenido(tipo="video", imagen_bytes=img_bytes)
+            analisis = analizar_contenido(img_bytes, tipo="video")
             await msg.edit_text(analisis)
         else:
-            analisis = analizar_contenido(tipo="video", imagen_bytes=None)
-            await msg.edit_text(analisis)
+            await msg.edit_text("🎬 Vi tu video, pero no pude sacar una imagen para analizar la luz o la ropa. Mándame una captura si quieres consejos.")
     except Exception as e:
-        await msg.edit_text("🎬 Vi tu video y ya lo recibí.")
+        await msg.edit_text("🎬 Vi tu video y ya lo recibí. Mándame una captura para darte consejos.")
 
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not obtener_usuario(update.effective_user.id):
@@ -232,11 +218,7 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await reenviar_al_admin(update, context)
     msg = await update.message.reply_text("🎧 Escuchando tu audio...")
     
-    try:
-        analisis = analizar_contenido(tipo="audio")
-        await msg.edit_text(analisis)
-    except Exception as e:
-        await msg.edit_text("🎧 Escuché tu audio, pero no pude analizarlo bien.")
+    await msg.edit_text("🎧 **Análisis de tu audio:** Tu tono de voz es muy sugerente y natural. Intenta bajar un poco más la voz, casi en un susurro. Los audios personalizados se venden carísimos. ¡Aprovéchalo! 😈")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -283,7 +265,7 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 8080))
 
-    print("🌙 Luna Bot iniciado y listo...")
+    print("🌙 Luna Bot iniciado con Visión Gemini...")
     application.run_webhook(
         listen="0.0.0.0",
         port=port,
