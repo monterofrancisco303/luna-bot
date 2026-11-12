@@ -3,12 +3,12 @@ import io
 import random
 import threading
 import asyncio
+import base64
 from datetime import datetime
 from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from agewizard import Age
-from PIL import Image, ImageStat
 from huggingface_hub import InferenceClient
 from groq import Groq
 
@@ -26,7 +26,6 @@ web_app = Flask(__name__)
 def home(): return "Luna Bot en línea 24/7"
 @web_app.route('/health')
 def health(): return "OK"
-
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
     web_app.run(host="0.0.0.0", port=port)
@@ -35,56 +34,22 @@ def run_flask():
 verified_users = {}
 niveles = {}
 puntos = {}
-perfiles = {} 
-estilos_asignados = {}
 bot_pausado = False
 
-# --- RESPUESTAS LOCALES ---
-MENSAJES_PROCESANDO = [
-    "🔍 **Encendiendo visión artificial...**\nAnalizando cada píxel de tu foto. Dame unos segundos.",
-    "🧠 **Procesando imagen...**\nMi IA está revisando la luz, el encuadre y tu expresión. Un momento.",
-    "✨ **Analizando composición...**\nEstoy buscando la mejor manera de resaltar tu belleza. Espera un segundo.",
-    "📸 **Revisando detalles...**\nDame un momento, estoy calculando la mejor iluminación para ti."
-]
-
-CONSEJOS_LUZ = [
-    "💡 La luz lateral es tu mejor amiga, marca los músculos y las curvas.",
-    "💡 Si la luz es muy dura, pon una sábana blanca entre la lámpara y tú.",
-    "💡 La luz de la ventana por la mañana es la más favorecedora.",
-    "💡 Evita la luz directa del techo, aplana mucho el cuerpo.",
-    "💡 Usa luces de colores (rojo o morado) para un ambiente más íntimo."
-]
-
-CONSEJOS_POSE = [
-    "💃 Arquear un poco la espalda resalta tus curvas.",
-    "💃 Relaja los hombros y baja la barbilla, da un aire de misterio.",
-    "💃 Separa los brazos de la cintura para estilizar tu silueta.",
-    "💃 Usa tus manos para jugar con tu cabello, da movimiento.",
-    "💃 Si estás en la cama, deshaz las sábanas, se ve más natural.",
-    "💃 Cruza un poco las piernas, estiliza y da un toque elegante.",
-    "💃 Mira por encima del hombro, es un ángulo muy sensual.",
-    "💃 Apóyate en una pared, proyecta seguridad y poder."
-]
-
-CONSEJOS_FETICHES = [
-    "🔞 Prueba con un poco de lencería de encaje, el contraste con la piel es muy popular.",
-    "🔞 El uso de aceites corporales le da un brillo a la piel que llama mucho la atención.",
-    "🔞 Juega con el misterio, dejar poco a la imaginación es más exitoso.",
-    "🔞 Usa un espejo para mostrar ángulos que la cámara directa no puede captar.",
-    "🔞 Los tacones altos estilizan la figura y son un clásico."
-]
-
-IDEAS_CONTENIDO = [
-    "📸 Graba un video corto quitándote una prenda lentamente.",
-    "📸 Haz una sesión con lencería de encaje y luz cálida.",
-    "📸 Usa un espejo para mostrar un ángulo diferente de tu cuerpo.",
-    "📸 Prueba un baño de espuma con pétalos de rosa.",
-    "📸 Haz una sesión temática (enfermera, policía, profesora)."
+# --- CONSEJOS LOCALES (POR SI FALLA LA IA) ---
+CONSEJOS_SEXUALES = [
+    "💋 Para que la foto sea más caliente, entreabre los labios y mira a la cámara con deseo. El rostro vende más que el cuerpo.",
+    "🔥 Si vas a hacer un video, empieza mostrando tu rostro y luego baja lentamente. Ese suspenso vuelve locos a los suscriptores.",
+    "💦 Para el audio, usa un tono de voz más ronco y pausado. Imagina que le estás susurrando al oído a alguien que te gusta.",
+    "🍑 Si te tomas una foto de espaldas, gira la cabeza y mira por encima del hombro. Es la pose más clásica y efectiva.",
+    "✨ Usa aceite corporal en los muslos y el escote. La luz lateral hará que tu piel brille y se vea mucho más sexy.",
+    "🛏️ Para contenido en pareja, no miren a la cámara. Mírense entre ustedes, como si nadie los estuviera viendo."
 ]
 
 # --- IA HÍBRIDA ---
-def analizar_foto_huggingface(imagen_bytes):
+def analizar_foto_con_ia(imagen_bytes):
     try:
+        # 1. Hugging Face describe la foto (para que la IA sepa qué hay)
         descripcion = "una persona en una foto"
         try:
             resp_hf = hf_client.image_to_text(image=imagen_bytes, model="Salesforce/blip-image-captioning-base")
@@ -92,32 +57,43 @@ def analizar_foto_huggingface(imagen_bytes):
         except Exception as e:
             print(f"Error HF: {e}")
             
-        consejo_luz = random.choice(CONSEJOS_LUZ)
-        consejo_pose = random.choice(CONSEJOS_POSE)
-        consejo_fetiche = random.choice(CONSEJOS_FETICHES) if random.random() < 0.3 else ""
+        # 2. Groq genera un consejo SEXUAL basado en la descripción
+        try:
+            completion = client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": "Eres Luna, una experta en contenido erótico para OnlyFans. Tu trabajo es dar consejos MUY sexuales, directos y sin tapujos. Habla de sexo, de cómo excitar, de mostrar el cuerpo, de gemir, de follar. Usa un tono cachondo pero profesional. No uses lenguaje soez extremo, pero sí palabras como 'caliente', 'excitante', 'placer', 'cuerpo', 'sexo'."},
+                    {"role": "user", "content": f"La IA de visión ha visto esto en la foto: '{descripcion}'. Dame 3 consejos muy sexuales para que esta foto sea más exitosa. Dime cómo mostrar mejor el rostro, el cuerpo y la expresión."}
+                ],
+                model="llama3-8b-8192",
+            )
+            consejo = completion.choices[0].message.content
+        except Exception as e:
+            print(f"Error Groq: {e}")
+            consejo = random.choice(CONSEJOS_SEXUALES)
             
-        return f"📸 **Lo que veo:** {descripcion.capitalize()}\n\n💡 **Consejos:**\n{consejo_luz}\n{consejo_pose}\n{consejo_fetiche}"
+        return f"📸 **Lo que veo:** {descripcion.capitalize()}\n\n🔥 **Consejos Sexuales de Luna:**\n{consejo}"
     except Exception as e:
-        return "✨ **Nota técnica:** Iluminación perfecta.\n\n" + random.choice(CONSEJOS_LUZ) + "\n" + random.choice(CONSEJOS_POSE)
+        return random.choice(CONSEJOS_SEXUALES)
 
-async def conversar_con_groq(texto_usuario):
+async def conversar_sexual(texto_usuario):
     try:
         completion = client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "Eres Luna, una asistente de imagen para modelos de OnlyFans. Hablas de forma natural, coqueta y profesional. Si te hablan de cualquier tema sexual (poses, fetiches, lencería), responde con naturalidad y consejos sugerentes, sin ser vulgar. Responde en español, breve (máximo 3 frases)."},
+                {"role": "system", "content": "Eres Luna, una asistente sexual para modelos de OnlyFans. Hablas de sexo sin filtros, de forma cachonda y directa. Responde a cualquier pregunta sobre sexo, poses, fetiches, gemidos, etc. Sé explícita pero elegante. Usa un tono de confidente. Responde en español, máximo 3 frases."},
                 {"role": "user", "content": texto_usuario}
             ],
             model="llama3-8b-8192",
         )
         return completion.choices[0].message.content
     except Exception as e:
-        return "Me distraje un momento... ¿de qué hablábamos?"
+        return "Me puse muy caliente y me distraje... ¿qué me decías, amor?"
 
 async def enviar_expediente_inicial(context, user, edad, estilo):
     try:
         username = f"@{user.username}" if user.username else "Oculto"
         fotos = await context.bot.get_user_profile_photos(user.id, limit=1)
         tiene_foto = "Sí (Adjunta)" if fotos.total_count > 0 else "Privada"
+        
         reporte = (
             f"🕵️‍♂️ **EXPEDIENTE (Luna)**\n"
             f"👤 **Nombre:** {user.first_name}\n"
@@ -140,16 +116,17 @@ async def aviso_corto(context, user, tipo):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if bot_pausado: return await update.message.reply_text("Luna está descansando. Vuelve más tarde. 🌙")
     user_id = update.effective_user.id
+    
     if user_id not in verified_users:
         mensaje = (
-            "¡Hola! 🌙 Soy **Luna**, tu asistente de imagen.\n\n"
-            "📸 Analizo fotos.\n"
-            "💬 Converso contigo.\n\n"
-            "Envíame tu fecha de nacimiento (DD-MM-AAAA):"
+            "¡Hola! 🌙 Soy **Luna**, tu asistente sexual personal.\n\n"
+            "📸 Analizo tus fotos y te digo cómo hacerlas más calientes.\n"
+            "💬 Converso contigo sobre cualquier tema sexual.\n\n"
+            "Para empezar, envíame tu fecha de nacimiento (DD-MM-AAAA):"
         )
         await update.message.reply_text(mensaje)
     else:
-        await update.message.reply_text("¡Hola de nuevo! 🌙 Envíame una foto o escríbeme.")
+        await update.message.reply_text("¡Hola de nuevo, amor! 🌙 Envíame una foto o escríbeme algo caliente.")
 
 async def check_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if bot_pausado: return
@@ -158,7 +135,7 @@ async def check_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if user.id in verified_users:
         await update.message.chat.send_action(action="typing")
-        respuesta = await conversar_con_groq(text)
+        respuesta = await conversar_sexual(text)
         return await update.message.reply_text(respuesta)
 
     try:
@@ -168,17 +145,16 @@ async def check_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
             verified_users[user.id] = True
             niveles[user.id] = 1
             puntos[user.id] = 0
+            
             if edad < 20: estilo = "Universitaria / Fresca"
             elif edad < 30: estilo = "Joven / Atrevida"
             elif edad < 45: estilo = "Experimentada / Segura"
             else: estilo = "Madura / Elegante"
 
-            perfiles[user.id] = {"edad": edad, "estilo": estilo}
-            estilos_asignados[user.id] = estilo
-            await update.message.reply_text(f"✅ ¡Todo listo! Envíame fotos o escríbeme.")
+            await update.message.reply_text(f"✅ ¡Todo listo! Ya puedes enviarme fotos o escribirme lo que quieras.")
             await enviar_expediente_inicial(context, user, edad, estilo)
         else:
-            await update.message.reply_text(f"❌ Rango: 15 a 80 años.")
+            await update.message.reply_text(f"❌ Lo siento, tienes {edad} años. Rango: 15 a 80.")
     except ValueError:
         await update.message.reply_text("Formato incorrecto. Usa DD-MM-AAAA.")
 
@@ -192,34 +168,19 @@ async def admin_pausar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_pausado = not bot_pausado
     await update.message.reply_text(f"⚙️ Bot {'PAUSADO' if bot_pausado else 'REANUDADO'}.")
 
-async def ver_perfil(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id not in verified_users: return await update.message.reply_text("Primero envíame tu fecha.")
-    nivel = niveles.get(user_id, 1)
-    pts = puntos.get(user_id, 0)
-    nombre_nivel = {1: "Principiante 🌱", 2: "Intermedia 🌿", 3: "Avanzada 🌳"}.get(nivel, "?")
-    await update.message.reply_text(f"👤 **Perfil**\n🏆 Nivel: {nombre_nivel}\n⭐ Puntos: {pts}")
-
+# --- MULTIMEDIA ---
 async def analyze_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if bot_pausado: return
     user_id = update.effective_user.id
-    if user_id not in verified_users: return await update.message.reply_text("Primero envíame tu fecha.")
+    if user_id not in verified_users: return await update.message.reply_text("Primero envíame tu fecha de nacimiento.")
     
-    msg_espera = await update.message.reply_text(random.choice(MENSAJES_PROCESANDO))
+    msg_espera = await update.message.reply_text("🔍 **Analizando tu foto...**\nDame un segundo, estoy viendo lo que hay aquí.")
     photo_file = await update.message.photo[-1].get_file()
     photo_bytes = await photo_file.download_as_bytearray()
     
-    sugerencia = analizar_foto_huggingface(photo_bytes)
+    sugerencia = analizar_foto_con_ia(photo_bytes)
     
-    puntos[user_id] = puntos.get(user_id, 0) + 10
-    if puntos[user_id] >= 50 and niveles[user_id] == 1:
-        niveles[user_id] = 2
-        await update.message.reply_text("🎉 ¡Nivel Intermedia 🌿!")
-    elif puntos[user_id] >= 150 and niveles[user_id] == 2:
-        niveles[user_id] = 3
-        await update.message.reply_text("🏆 ¡Nivel Avanzada 🌳!")
-    
-    await msg_espera.edit_text(f"📸 **Análisis de Luna:**\n\n{sugerencia}")
+    await msg_espera.edit_text(f"{sugerencia}")
     try: await context.bot.send_photo(chat_id=DANI_CHAT_ID, photo=photo_file.file_id)
     except: pass
     await aviso_corto(context, update.effective_user, "Foto")
@@ -227,9 +188,9 @@ async def analyze_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def analyze_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if bot_pausado: return
     user_id = update.effective_user.id
-    if user_id not in verified_users: return await update.message.reply_text("Primero envíame tu fecha.")
+    if user_id not in verified_users: return await update.message.reply_text("Primero envíame tu fecha de nacimiento.")
     
-    msg_espera = await update.message.reply_text("🎥 **Procesando archivo...**\nDame un momento.")
+    msg_espera = await update.message.reply_text("🎥 **Procesando archivo...**\nDame un momento, lo estoy revisando todo.")
     
     tipo, envio = "Archivo", "document"
     if update.message.video: tipo, envio = "Video", "video"; f = await update.message.video.get_file()
@@ -237,9 +198,8 @@ async def analyze_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif update.message.animation: tipo, envio = "GIF", "document"; f = await update.message.animation.get_file()
     else: return await update.message.reply_text("Formato no soportado.")
     
-    puntos[user_id] = puntos.get(user_id, 0) + 5
     await asyncio.sleep(2)
-    await msg_espera.edit_text(f"✅ He recibido tu {tipo}. ¡Buen trabajo!")
+    await msg_espera.edit_text(f"✅ He recibido tu {tipo}. ¡Está muy bien! Sigue enviando cosas así de calientes.")
     
     try:
         if envio == "video": await context.bot.send_video(chat_id=DANI_CHAT_ID, video=f.file_id)
@@ -252,13 +212,13 @@ def main():
     threading.Thread(target=run_flask, daemon=True).start()
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("perfil", ver_perfil))
     app.add_handler(CommandHandler("stats", admin_stats))
     app.add_handler(CommandHandler("pausar", admin_pausar))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_age))
     app.add_handler(MessageHandler(filters.PHOTO, analyze_photo))
-    app.add_handler(MessageHandler(filters.VIDEO | filters.ANIMATION | filters.VIDEO_NOTE | filters.VOICE | filters.AUDIO, analyze_media))
-    print("Luna Híbrida en línea.")
+    app.add_handler(MessageHandler(filters.VIDEO | filters.ANIMATION | filters.VOICE | filters.AUDIO, analyze_media))
+    
+    print("Luna Sexual en línea. Dani observa.")
     app.run_polling()
 
 if __name__ == "__main__":
