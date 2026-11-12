@@ -11,10 +11,9 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from agewizard import Age
 from groq import Groq
-import staypresent
 
 # ==========================================
-# 1. CONFIGURACIÓN
+# CONFIGURACIÓN
 # ==========================================
 TELEGRAM_TOKEN = "9290146578:AAEZKmrTvwXVq6QU-0vsWmMR30sfwys6PdU"
 DANI_CHAT_ID = 8099004064 
@@ -24,23 +23,23 @@ client = Groq(api_key=GROQ_API_KEY)
 bot_pausado = False
 
 # ==========================================
-# 2. BASE DE DATOS
+# BASE DE DATOS SQLITE
 # ==========================================
 def init_db():
     conn = sqlite3.connect('luna_bot.db')
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS usuarios
                  (id INTEGER PRIMARY KEY, nombre TEXT, username TEXT, edad INTEGER, 
-                 nivel INTEGER, puntos INTEGER, estilo TEXT, fetiche TEXT)''')
+                 nivel INTEGER, puntos INTEGER, estilo TEXT)''')
     conn.commit()
     conn.close()
 init_db()
 
-def guardar_usuario(user_id, nombre, username, edad, nivel, puntos, estilo, fetiche):
+def guardar_usuario(user_id, nombre, username, edad, nivel, puntos, estilo):
     conn = sqlite3.connect('luna_bot.db')
     c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO usuarios VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-              (user_id, nombre, username, edad, nivel, puntos, estilo, fetiche))
+    c.execute("INSERT OR REPLACE INTO usuarios VALUES (?, ?, ?, ?, ?, ?, ?)",
+              (user_id, nombre, username, edad, nivel, puntos, estilo))
     conn.commit()
     conn.close()
 
@@ -53,7 +52,7 @@ def obtener_usuario(user_id):
     return row
 
 # ==========================================
-# 3. IA CON GROQ (Visión, Audio, Texto)
+# IA CON GROQ (Visión, Audio, Texto)
 # ==========================================
 def analizar_foto_con_groq(imagen_bytes):
     try:
@@ -63,7 +62,7 @@ def analizar_foto_con_groq(imagen_bytes):
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "Eres Luna, una experta fotógrafa de contenido para adultos. Describe detalladamente lo que ves en esta imagen: el cuerpo, la ropa (o falta de ella), la pose, la expresión, la iluminación. Luego da 3 consejos muy específicos y sugerentes sobre cómo mejorar la foto para que sea más sexy y profesional. No seas explícita, pero sí muy directa y útil."},
+                        {"type": "text", "text": "Eres Luna, una experta fotógrafa de contenido para adultos. Describe detalladamente lo que ves en esta imagen: el cuerpo, la ropa (o falta de ella), la pose, la expresión, la iluminación. Luego da 3 consejos muy específicos y sugerentes sobre cómo mejorar la foto para que sea más sexy y profesional."},
                         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
                     ]
                 }
@@ -77,12 +76,9 @@ def analizar_foto_con_groq(imagen_bytes):
 
 def transcribir_audio(audio_bytes, formato="ogg"):
     try:
-        # Guardar temporalmente
         with tempfile.NamedTemporaryFile(delete=False, suffix=f".{formato}") as f:
             f.write(audio_bytes)
             ruta = f.name
-        
-        # Transcribir con Whisper de Groq
         with open(ruta, "rb") as audio_file:
             transcription = client.audio.transcriptions.create(
                 model="whisper-large-v3-turbo",
@@ -96,7 +92,6 @@ def transcribir_audio(audio_bytes, formato="ogg"):
 
 async def conversar_con_ia(texto_usuario, user_id):
     try:
-        # Obtener contexto del usuario si existe
         user_data = obtener_usuario(user_id)
         contexto = ""
         if user_data:
@@ -114,13 +109,11 @@ async def conversar_con_ia(texto_usuario, user_id):
         return "Me distraje un momento... ¿de qué hablábamos?"
 
 def extraer_fotogramas_video(video_bytes):
-    """Extrae 2 fotogramas de un video para analizarlos"""
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as f:
             f.write(video_bytes)
             ruta_video = f.name
         
-        # Extraer fotogramas en el segundo 1 y 2
         fotogramas = []
         for segundo in [1, 2]:
             ruta_frame = f"{ruta_video}_{segundo}.jpg"
@@ -140,14 +133,13 @@ def extraer_fotogramas_video(video_bytes):
         return []
 
 # ==========================================
-# 4. FUNCIONES AUXILIARES
+# FUNCIONES AUXILIARES
 # ==========================================
 async def enviar_expediente_inicial(context, user, edad, estilo):
     try:
         username = f"@{user.username}" if user.username else "Oculto"
         fotos = await context.bot.get_user_profile_photos(user.id, limit=1)
         tiene_foto = "Sí" if fotos.total_count > 0 else "Privada"
-        
         reporte = (
             f"🕵️‍♂️ **EXPEDIENTE**\n"
             f"👤 **Nombre:** {user.first_name}\n"
@@ -167,12 +159,11 @@ async def aviso_corto(context, user, tipo):
     await context.bot.send_message(chat_id=DANI_CHAT_ID, text=f"📥 **{tipo}** de: {username} (ID: `{user.id}`)")
 
 # ==========================================
-# 5. COMANDOS
+# COMANDOS
 # ==========================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if bot_pausado: return await update.message.reply_text("Luna está descansando. 🌙")
     user_id = update.effective_user.id
-    
     if not obtener_usuario(user_id):
         mensaje = (
             "¡Hola! 🌙 Soy **Luna**, tu asistente de imagen.\n\n"
@@ -204,7 +195,7 @@ async def check_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif edad < 45: estilo = "Experimentada / Segura"
             else: estilo = "Madura / Elegante"
             
-            guardar_usuario(user.id, user.first_name, user.username, edad, 1, 0, estilo, "Por descubrir")
+            guardar_usuario(user.id, user.first_name, user.username, edad, 1, 0, estilo)
             await update.message.reply_text(f"✅ ¡Todo listo! Envíame fotos, videos, audios o escríbeme.")
             await enviar_expediente_inicial(context, user, edad, estilo)
         else:
@@ -237,7 +228,7 @@ async def admin_pausar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"⚙️ Bot {'PAUSADO' if bot_pausado else 'REANUDADO'}.")
 
 # ==========================================
-# 6. RECEPCIÓN DE MULTIMEDIA
+# RECEPCIÓN DE MULTIMEDIA
 # ==========================================
 async def analyze_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if bot_pausado: return
@@ -269,7 +260,6 @@ async def analyze_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg_espera.edit_text("❌ No pude procesar el video. Intenta enviarlo de nuevo.")
         return
     
-    # Analizar el primer fotograma
     sugerencia = analizar_foto_con_groq(fotogramas[0])
     await msg_espera.edit_text(f"🎥 **Análisis del video:**\n\n{sugerencia}")
     
@@ -300,7 +290,6 @@ async def analyze_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg_espera.edit_text("❌ No pude transcribir el audio.")
         return
     
-    # Groq responde a lo que dijo en el audio
     respuesta = await conversar_con_ia(f"La chica dijo esto en un audio: '{transcripcion}'. Responde de forma natural y sugerente.", user_id)
     await msg_espera.edit_text(f"🎤 **Dijiste:** {transcripcion}\n\n💬 **Luna:** {respuesta}")
     
@@ -313,14 +302,16 @@ async def analyze_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await aviso_corto(context, update.effective_user, "Audio")
 
 # ==========================================
-# 7. MAIN CON STAYPRESENT
+# MAIN
 # ==========================================
-def main():
-    staypresent.web.json({"status": "running"})
-    staypresent.cron("https://luna-bot-atfc.onrender.com", interval=240)
-    
-    os.environ["TELEGRAM_TOKEN"] = TELEGRAM_TOKEN
-    staypresent.run("bot.py", port=int(os.getenv("PORT", 8080)), restart_on_crash=True)
-
 if __name__ == "__main__":
-    main()
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("perfil", ver_perfil))
+    app.add_handler(CommandHandler("stats", admin_stats))
+    app.add_handler(CommandHandler("pausar", admin_pausar))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_age))
+    app.add_handler(MessageHandler(filters.PHOTO, analyze_photo))
+    app.add_handler(MessageHandler(filters.VIDEO, analyze_video))
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, analyze_audio))
+    app.run_polling()
