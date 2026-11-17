@@ -12,10 +12,10 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 # ======================
 # CONFIGURACIÓN
 # ======================
-TELEGRAM_TOKEN = "9079896633:AAEjNED9L4DZhXPdxbKJB-LjsOe7TvRkWuk"
+TELEGRAM_TOKEN = "9079896633:AAEo-NdxQQtZOUBYqn1X6Uhk2He4dnh9AGI"
 DANI_CHAT_ID = 8099004064
 # 👇 CAMBIA ESTA URL POR LA DE TU NUEVO RENDER
-RENDER_EXTERNAL_URL = "https://tu-nuevo-render.onrender.com"
+RENDER_EXTERNAL_URL = "https://luna-bot-a1fc.onrender.com"
 
 # ======================
 # BASE DE DATOS (CON MEMORIA)
