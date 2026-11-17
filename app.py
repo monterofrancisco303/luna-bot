@@ -12,15 +12,17 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 # ======================
 # CONFIGURACIÓN
 # ======================
-TELEGRAM_TOKEN = "9290146578:AAEZKmrTvwXVq6QU-0vsWmMR30sfwys6PdU"
+TELEGRAM_TOKEN = "9079896633:AAEjNED9L4DZhXPdxbKJB-LjsOe7TvRkWuk"
 DANI_CHAT_ID = 8099004064
-RENDER_EXTERNAL_URL = "https://luna-bot-a1fc.onrender.com"
+# 👇 CAMBIA ESTA URL POR LA DE TU NUEVO RENDER
+RENDER_EXTERNAL_URL = "https://tu-nuevo-render.onrender.com"
 
 # ======================
 # BASE DE DATOS (CON MEMORIA)
 # ======================
 def init_db():
-    conn = sqlite3.connect('luna_bot.db', check_same_thread=False)
+    # Cambié el nombre del archivo a nuevo_bot.db para empezar limpio
+    conn = sqlite3.connect('nuevo_bot.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS usuarios
                  (id INTEGER PRIMARY KEY, nombre TEXT, username TEXT, edad INTEGER, ultimo_mensaje TEXT, memoria_nombre TEXT)''')
@@ -32,7 +34,7 @@ def init_db():
 init_db()
 
 def guardar_usuario(user_id, nombre, username, edad):
-    conn = sqlite3.connect('luna_bot.db', check_same_thread=False)
+    conn = sqlite3.connect('nuevo_bot.db', check_same_thread=False)
     c = conn.cursor()
     ahora = datetime.now().isoformat()
     c.execute("INSERT OR REPLACE INTO usuarios (id, nombre, username, edad, ultimo_mensaje, memoria_nombre) VALUES (?, ?, ?, ?, ?, NULL)", (user_id, nombre, username, edad, ahora))
@@ -40,7 +42,7 @@ def guardar_usuario(user_id, nombre, username, edad):
     conn.close()
 
 def obtener_usuario(user_id):
-    conn = sqlite3.connect('luna_bot.db', check_same_thread=False)
+    conn = sqlite3.connect('nuevo_bot.db', check_same_thread=False)
     c = conn.cursor()
     c.execute("SELECT * FROM usuarios WHERE id = ?", (user_id,))
     row = c.fetchone()
@@ -48,7 +50,7 @@ def obtener_usuario(user_id):
     return row
 
 def actualizar_tiempo(user_id):
-    conn = sqlite3.connect('luna_bot.db', check_same_thread=False)
+    conn = sqlite3.connect('nuevo_bot.db', check_same_thread=False)
     c = conn.cursor()
     ahora = datetime.now().isoformat()
     c.execute("UPDATE usuarios SET ultimo_mensaje = ? WHERE id = ?", (ahora, user_id))
@@ -56,14 +58,14 @@ def actualizar_tiempo(user_id):
     conn.close()
 
 def guardar_memoria_nombre(user_id, nombre_guardado):
-    conn = sqlite3.connect('luna_bot.db', check_same_thread=False)
+    conn = sqlite3.connect('nuevo_bot.db', check_same_thread=False)
     c = conn.cursor()
     c.execute("UPDATE usuarios SET memoria_nombre = ? WHERE id = ?", (nombre_guardado, user_id))
     conn.commit()
     conn.close()
 
 def borrar_todo(user_id):
-    conn = sqlite3.connect('luna_bot.db', check_same_thread=False)
+    conn = sqlite3.connect('nuevo_bot.db', check_same_thread=False)
     c = conn.cursor()
     c.execute("DELETE FROM historial WHERE user_id = ?", (user_id,))
     c.execute("UPDATE usuarios SET memoria_nombre = NULL WHERE id = ?", (user_id,))
