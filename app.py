@@ -218,7 +218,8 @@ async def responder_con_gemini(
         partes_actuales.append(
             types.Part.from_bytes(data=bytes(audio_bytes), mime_type=audio_mime)
         )
-    partes_actuales.append(texto_usuario)
+    if texto_usuario:
+        partes_actuales.append(types.Part.from_text(text=texto_usuario))
 
     contents = historial_previo + [
         types.Content(role="user", parts=partes_actuales)
