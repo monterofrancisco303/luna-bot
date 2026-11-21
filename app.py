@@ -31,7 +31,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or "9079896633:AAEo-NdxQQtZOUBY
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 DANI_CHAT_ID = int(os.getenv("DANI_CHAT_ID", "8099004064"))
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "https://luna-bot-a1fc.onrender.com")
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 DB_PATH = os.getenv("SQLITE_PATH", "nuevo_bot.db")
 
 # ======================
