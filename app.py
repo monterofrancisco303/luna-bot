@@ -35,14 +35,14 @@ DB_PATH = os.getenv("SQLITE_PATH", "nuevo_bot.db")
 
 
 # ======================
-# MOTOR DE RESPUESTAS (FICCIÓN CYBER + CONTENIDO + OSINT REAL)
+# MOTOR DE RESPUESTAS (CYBER + CONTENIDO + OSINT REAL)
 # ======================
 PREFIJOS_HACKER_FICCION = [
     "[SYS//LUNA.SH] > ",
     "[NODE_09 // ENLACE ACTIVO] ",
-    "[TRACE_UI // FICTICIO] ",
     "[SHELL_LUNA v4.2] ",
     "[SIGNAL_LOCK] ",
+    "",
     "",
     "",
 ]
