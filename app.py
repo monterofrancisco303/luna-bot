@@ -6,6 +6,8 @@ import random
 import re
 from PIL import Image, ImageStat
 from datetime import datetime, timedelta
+from google import genai
+from google.genai import types
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -16,6 +18,107 @@ TELEGRAM_TOKEN = "9079896633:AAEo-NdxQQtZOUBYqn1X6Uhk2He4dnh9AGI"
 DANI_CHAT_ID = 8099004064
 # 👇 CAMBIA ESTA URL POR LA DE TU NUEVO RENDER
 RENDER_EXTERNAL_URL = "https://luna-bot-a1fc.onrender.com"
+
+# ======================
+# GEMINI (BÚSQUEDA GOOGLE + MEMORIA)
+# ======================
+gemini_client = genai.Client()
+
+SYSTEM_PROMPT = """
+Eres Luna, una amiga cercana, segura, directa, pícara y experta en creación de contenido, redes sociales y monetización.
+Hablas de forma natural y humana, como en una charla real, nunca como un robot ni diciendo "Como modelo de lenguaje".
+Usa emojis con naturalidad.
+Cuando te envíen una foto, video/GIF o audio, analiza lo que ves o escuchas con criterio práctico: luz, encuadre/pose o tono de voz, cómo mejorarlo y una idea concreta para monetizar o conectar con su audiencia.
+Cuando necesites información actual o verificar datos en internet, usa la búsqueda de Google.
+Recuerda y respeta el contexto de la conversación actual.
+"""
+
+def guardar_mensaje_historial(user_id: int, rol: str, mensaje: str):
+    conn = sqlite3.connect('nuevo_bot.db', check_same_thread=False)
+    c = conn.cursor()
+    c.execute("INSERT INTO historial (user_id, rol, mensaje) VALUES (?, ?, ?)", (user_id, rol, mensaje))
+    c.execute('''DELETE FROM historial
+                 WHERE user_id = ?
+                 AND id NOT IN (
+                     SELECT id FROM historial WHERE user_id = ? ORDER BY id DESC LIMIT 16
+                 )''', (user_id, user_id))
+    conn.commit()
+    conn.close()
+
+def obtener_historial_gemini(user_id: int) -> list[types.Content]:
+    conn = sqlite3.connect('nuevo_bot.db', check_same_thread=False)
+    c = conn.cursor()
+    c.execute("SELECT rol, mensaje FROM historial WHERE user_id = ? ORDER BY id ASC", (user_id,))
+    rows = c.fetchall()
+    conn.close()
+
+    contents: list[types.Content] = []
+    for rol, mensaje in rows:
+        role_gemini = "user" if rol == "user" else "model"
+        contents.append(
+            types.Content(role=role_gemini, parts=[types.Part.from_text(text=mensaje)])
+        )
+    return contents
+
+def preparar_imagen_gemini(imagen_bytes: bytes) -> Image.Image:
+    with Image.open(io.BytesIO(imagen_bytes)) as img:
+        convertida = img.convert("RGB")
+        convertida.thumbnail((1024, 1024))
+        return convertida
+
+async def responder_con_gemini(
+    user_id: int,
+    texto_usuario: str,
+    imagen_bytes: bytes | None = None,
+    audio_bytes: bytes | None = None,
+    audio_mime: str = "audio/ogg"
+) -> str:
+    usuario = obtener_usuario(user_id)
+    memoria_nombre = usuario[5] if usuario and len(usuario) > 5 else None
+
+    system_con_contexto = SYSTEM_PROMPT
+    if memoria_nombre:
+        system_con_contexto += f"\nEl nombre que la usuaria te dijo es: {memoria_nombre}."
+
+    historial_previo = obtener_historial_gemini(user_id)
+
+    partes_actuales: list = []
+    if imagen_bytes:
+        partes_actuales.append(preparar_imagen_gemini(imagen_bytes))
+    if audio_bytes:
+        partes_actuales.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
+    partes_actuales.append(texto_usuario)
+
+    contents = historial_previo + [
+        types.Content(role="user", parts=partes_actuales)
+    ]
+
+    config = types.GenerateContentConfig(
+        system_instruction=system_con_contexto,
+        tools=[{"google_search": {}}],
+        temperature=0.85,
+    )
+
+    response = await gemini_client.aio.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=contents,
+        config=config,
+    )
+
+    respuesta_texto = (response.text or "").strip()
+    if not respuesta_texto:
+        respuesta_texto = "Mmm, me quedé pensando un segundo... ¿me lo repites? 😉"
+
+    resumen_entrada = texto_usuario
+    if imagen_bytes:
+        resumen_entrada = f"[Envió una foto] {texto_usuario}".strip()
+    elif audio_bytes:
+        resumen_entrada = f"[Envió un audio] {texto_usuario}".strip()
+
+    guardar_mensaje_historial(user_id, "user", resumen_entrada)
+    guardar_mensaje_historial(user_id, "model", respuesta_texto)
+
+    return respuesta_texto
 
 # ======================
 # BASE DE DATOS (CON MEMORIA)
@@ -370,7 +473,14 @@ async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         actualizar_tiempo(user.id)
         await reenviar_al_admin(update, context)
         await update.message.chat.send_action(action="typing") 
-        respuesta = generar_respuesta_chat(user.id, text)
+        match_nombre = re.search(r"(?:me llamo|soy|mi nombre es)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ]+)", text.lower())
+        if match_nombre:
+            guardar_memoria_nombre(user.id, match_nombre.group(1).capitalize())
+        try:
+            respuesta = await responder_con_gemini(user.id, text)
+        except Exception as e:
+            print(f"Error en Gemini: {e}")
+            respuesta = generar_respuesta_chat(user.id, text)
         return await update.message.reply_text(respuesta)
     
     try:
